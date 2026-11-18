@@ -2294,6 +2294,14 @@ void HandleKeys()
         }
     }
 
+    // On the Textures row R / Y refresh the browser, as its REFRESH prompt shows, before Enter has gone into the grid too.
+    if (s_footer < 0 && !s_rows.empty() && s_rows[size_t(s_cursor)].edit == kTexturesRow && Pressed({ ImGuiKey_R, ImGuiKey_GamepadFaceUp }))
+    {
+        RefreshTextures();
+        Status(std::format("Textures refreshed: {} in the last frame.", BrowserTextures().size()));
+        return;
+    }
+
     // Tabs: Q / E (PgUp / PgDn, Ctrl+(Shift+)Tab too), the controller's LT / RT.
     if (Pressed({ ImGuiKey_GamepadL2, ImGuiKey_PageUp, ImGuiKey_Q }) || (io.KeyCtrl && io.KeyShift && Pressed({ ImGuiKey_Tab })))
         SwitchTab(s_tab - 1);
@@ -2947,7 +2955,7 @@ void DrawTextureBrowser(ImDrawList* dl, ImVec2 a, ImVec2 b)
     y += 26.0f * u;
     const std::string help = s_browsing
         ? std::format("Enter / {}: dump it to dump/textures/<hash>.dds next to the game\n"
-                      "A replacement goes in mods/<mod>/textures/<hash>.dds (any resolution, BC1-5 or 8-bit RGBA)", ButtonName("A"))
+                      "A replacement goes in mods/<mod>/textures/<hash>.dds (any resolution, BC1-5, BC7 or 8-bit RGBA)", ButtonName("A"))
         : std::format("Enter / {}: browse the {} textures of the frame the settings opened on (R / {}: refresh)\n"
                       "Dump textures (above) saves every texture the game uses", ButtonName("A"), list.size(), ButtonName("Y"));
     y += Paragraph(dl, ImVec2(a.x + pad, y), b.x - a.x - 2 * pad, 14.0f * ut, Rgb(0x9FB0E6), help) + 12.0f * u;
