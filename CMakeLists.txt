@@ -331,6 +331,7 @@ add_library(ac6_runtime OBJECT
     GracemeriaRecomp/src/gpu/dxc.cpp
     GracemeriaRecomp/src/gpu/no_gpu.cpp
     GracemeriaRecomp/src/gpu/renderer.cpp
+    GracemeriaRecomp/src/gpu/breadcrumbs.cpp
     GracemeriaRecomp/src/gpu/shaders.cpp
     GracemeriaRecomp/src/gpu/vblank.cpp
     GracemeriaRecomp/src/gpu/frame_rate.cpp

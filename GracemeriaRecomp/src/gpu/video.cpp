@@ -2,6 +2,7 @@
 
 #include "crash.h"
 #include "game/game_modes.h"
+#include "gpu/breadcrumbs.h"
 #include "gpu/capture.h"
 #include "gpu/deferred_commands.h"
 #include "gpu/frame_rate.h"
@@ -1043,8 +1044,9 @@ void Video::CheckDeviceLost()
     if (!plume::VulkanDeviceLost())
         return;
     const plume::RenderDeviceDescription& d = device->getDescription();
-    log::Error("The Vulkan device was lost (VK_ERROR_DEVICE_LOST) after {} frames: the GPU driver reset or "
-               "crashed. GPU: {}, driver {}", FramesIssued(), d.name, system_info::DriverVersion(uint32_t(d.vendor), d.driverVersion));
+    log::Error("The Vulkan device was lost (VK_ERROR_DEVICE_LOST) with the renderer at frame {}: the GPU driver reset or "
+               "crashed. GPU: {}, driver {}", RendererFrame(), d.name, system_info::DriverVersion(uint32_t(d.vendor), d.driverVersion));
+    breadcrumbs::Report(device.get());
     crash::Shutdown(1, "the graphics driver stopped responding");
 }
 

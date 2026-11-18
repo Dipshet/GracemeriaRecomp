@@ -101,6 +101,7 @@ public:
     void discardTexture(const plume::RenderTexture* texture) override;
     void resetQueryPool(const plume::RenderQueryPool* queryPool, uint32_t queryFirstIndex, uint32_t queryCount) override;
     void writeTimestamp(const plume::RenderQueryPool* queryPool, uint32_t queryIndex) override;
+    void writeBreadcrumb(const plume::RenderBuffer* buffer, uint64_t reachedOffset, uint64_t doneOffset, uint32_t value) override;
 
     // A call on the target list itself in its place (a library recording its own Vulkan commands):
     // `fn` gets the target and a copy of the `size` bytes at `data`. The list skips binds that repeat its last

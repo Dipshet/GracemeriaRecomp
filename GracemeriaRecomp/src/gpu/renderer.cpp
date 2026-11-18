@@ -2,6 +2,7 @@
 #include "game/cockpit.h"
 #include "game/draw_distance.h"
 #include "game/ui_layers.h"
+#include "gpu/breadcrumbs.h"
 #include "gpu/capture.h"
 #include "gpu/deferred_commands.h"
 #include "gpu/fsr.h"
@@ -335,6 +336,7 @@ struct Renderer
     // (render surfaces, resolve targets), and the guest frame's host size (the target above).
     float resX = 1.0f, resY = 1.0f;   // host pixels per guest pixel on each axis
     RenderFramebuffer* markedFramebuffer = nullptr;   // AC6_GPU_PASSES: the draws' pass last marked
+    RenderFramebuffer* crumbFramebuffer = nullptr;    // the draws' target of the last breadcrumb (gpu/breadcrumbs.h)
     uint32_t targetWidth = kGuestWidth, targetHeight = kGuestHeight;
     // Descriptors of rendered images: the scale they were rendered at (0: not rendered).
     std::vector<std::array<float, 2>> scaledDescriptors = std::vector<std::array<float, 2>>(kTextureDescriptors);
@@ -822,10 +824,14 @@ std::string PassImage(const HostImage* image)
     return std::format("{}x{} f{}{}", image->width, image->height, int(image->format), image->samples > 1 ? std::format(" x{}", image->samples) : "");
 }
 
-// Starts a timed pass (AC6_GPU_PASSES). The draws' passes start where their framebuffer changes.
+// Starts a pass: a GPU crash breadcrumb at the caller's place (gpu/breadcrumbs.h), and with AC6_GPU_PASSES a timed pass
+// (the label is made only then). The draws' passes start where their framebuffer changes.
 template <class Label>
-void MarkPass(Label&& label)
+void MarkPass(Label&& label, std::source_location where = std::source_location::current())
 {
+    if (g_video.Ready())
+        breadcrumbs::Mark(g_video.Commands(), s_r.frame, 0, 0, where);
+    s_r.crumbFramebuffer = nullptr;
     if (!g_video.GpuPassTiming())
         return;
     g_video.MarkGpuPass(label());
@@ -4243,6 +4249,12 @@ bool BindTargets(RenderCommandList& cl, uint32_t device, Targets& t, uint32_t di
         t.motion = &s_r.motion;
     }
     RenderFramebuffer* framebuffer = t.motion ? GetMotionFramebuffer(t.color, t.depth) : GetFramebuffer(t.color, t.depth);
+    if (framebuffer != s_r.crumbFramebuffer)
+    {
+        const HostImage* target = t.color ? t.color : t.depth;
+        breadcrumbs::Mark(cl, s_r.frame, target ? target->width : 0, target ? target->height : 0);
+        s_r.crumbFramebuffer = framebuffer;
+    }
     if (g_video.GpuPassTiming() && framebuffer != s_r.markedFramebuffer)
     {
         g_video.MarkGpuPass(std::format("draw {} + {}", PassImage(t.color), PassImage(t.depth)));
@@ -5781,6 +5793,7 @@ bool InitRenderer()
     if (!g_video.Ready())
         return false;
     RenderDevice& device = *g_video.device;
+    breadcrumbs::Init(device);
 
     // Layout: sets 0-2 = the bindless texture heap (2D/3D/cube views of one set), set 3 = samplers, set 4 = the
     // constants as uniform buffers (SPIR-V backend), 28 bytes of push constants (VS/PS/shared constant addresses, as
@@ -8743,6 +8756,7 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
         s_r.preUiFrame = s_r.frame;
     }
     g_video.CountGpuPassDraw();
+    breadcrumbs::NoteDraw(vs->hash, ps ? ps->hash : 0);
     // AC6_SKIP_VS=<hex prefix>[,<prefix>...]@<first>-<last>[;...]: skip draws whose vertex shader hash
     // starts with a prefix during those frames (bisecting which draws produce something on screen).
     // <prefix>#<n0>-<n1> skips only the n0-th to n1-th matching draws of each frame (counted from 0).

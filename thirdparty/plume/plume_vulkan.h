@@ -50,6 +50,12 @@ namespace plume {
     void SetVulkanErrorCallback(void (*callback)(const char *message));
     bool VulkanDeviceLost();
     void NoteVulkanResult(VkResult res);
+    // AC6: crash diagnostics. VulkanBufferMarkers: breadcrumbs are buffer markers (they also say what finished), not
+    // transfer fills. VulkanDeviceFaultReport: after a lost device, the driver's description of the fault
+    // (VK_EXT_device_fault) as log lines; empty where the driver offers none.
+    struct RenderDevice;
+    bool VulkanBufferMarkers(RenderDevice *device);
+    std::vector<std::string> VulkanDeviceFaultReport(RenderDevice *device);
 
     struct VulkanCommandQueue;
     struct VulkanDevice;
@@ -385,6 +391,11 @@ namespace plume {
         void discardTexture(const RenderTexture* texture) override;
         void resetQueryPool(const RenderQueryPool *queryPool, uint32_t queryFirstIndex, uint32_t queryCount) override;
         void writeTimestamp(const RenderQueryPool *queryPool, uint32_t queryIndex) override;
+        void writeBreadcrumb(const RenderBuffer *buffer, uint64_t reachedOffset, uint64_t doneOffset, uint32_t value) override;
+        // AC6: a breadcrumb made inside a render pass without VK_AMD_buffer_marker: written as the pass ends.
+        VkBuffer pendingBreadcrumbBuffer = VK_NULL_HANDLE;
+        uint64_t pendingBreadcrumbOffset = 0;
+        uint32_t pendingBreadcrumbValue = 0;
         void checkActiveRenderPass();
         void endActiveRenderPass();
         // AC6: barriers wait until the next command needs them, so consecutive ones are one vkCmdPipelineBarrier.
@@ -465,6 +476,8 @@ namespace plume {
         std::unique_ptr<RenderBuffer> nullBuffer;
         bool loadStoreOpNoneSupported = false;
         bool nullDescriptorSupported = false;
+        bool bufferMarkerSupported = false;   // AC6: VK_AMD_buffer_marker (writeBreadcrumb)
+        bool deviceFaultSupported = false;    // AC6: VK_EXT_device_fault (VulkanDeviceFaultReport)
         // AC6: the Vulkan 1.3 path: dynamic rendering with the rasterizer and depth/stencil state dynamic, depth clamp
         // dynamic too where VK_EXT_extended_dynamic_state3 allows, and pipelines linked from libraries
         // (VK_EXT_graphics_pipeline_library with fast linking): per shader, compiled once, ahead of time.

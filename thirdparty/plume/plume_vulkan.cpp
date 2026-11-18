@@ -138,6 +138,9 @@ namespace plume {
         VK_KHR_PRESENT_ID_EXTENSION_NAME,
         VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
         VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME,
+        // AC6: GPU crash diagnostics (writeBreadcrumb, VulkanDeviceFaultReport).
+        VK_AMD_BUFFER_MARKER_EXTENSION_NAME,
+        VK_EXT_DEVICE_FAULT_EXTENSION_NAME,
         // Vulkan spec requires this to be enabled if supported by the driver.
         VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
     };
@@ -3341,6 +3344,7 @@ namespace plume {
     void VulkanCommandList::begin() {
         vkResetCommandBuffer(vk, 0);
         appliedDynamicValid = false;
+        pendingBreadcrumbBuffer = VK_NULL_HANDLE;
 
         VkCommandBufferBeginInfo beginInfo = {};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -4105,6 +4109,24 @@ namespace plume {
         vkCmdWriteTimestamp(vk, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, interfaceQueryPool->vk, queryIndex);
     }
 
+    void VulkanCommandList::writeBreadcrumb(const RenderBuffer *buffer, uint64_t reachedOffset, uint64_t doneOffset, uint32_t value) {
+        const VkBuffer target = static_cast<const VulkanBuffer *>(buffer)->vk;
+        if (queue->device->bufferMarkerSupported) {
+            // Marker writes need no barrier flush: they don't depend on the pending barriers' resources.
+            vkCmdWriteBufferMarkerAMD(vk, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, target, reachedOffset, value);
+            vkCmdWriteBufferMarkerAMD(vk, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, target, doneOffset, value);
+            return;
+        }
+        if (renderingActive || activeRenderPass != VK_NULL_HANDLE) {
+            // No transfer inside a render pass: the latest one is written when it ends (endActiveRenderPass).
+            pendingBreadcrumbBuffer = target;
+            pendingBreadcrumbOffset = reachedOffset;
+            pendingBreadcrumbValue = value;
+            return;
+        }
+        vkCmdFillBuffer(vk, target, reachedOffset, 4, value);
+    }
+
     // AC6: the Vulkan 1.3 path's state at bind time, skipping what the last pipeline already set.
     void VulkanCommandList::applyDynamicState(const VulkanGraphicsPipeline::DynamicValues &d) {
         const VulkanGraphicsPipeline::DynamicValues &a = appliedDynamic;
@@ -4205,6 +4227,10 @@ namespace plume {
         if (activeRenderPass != VK_NULL_HANDLE) {
             vkCmdEndRenderPass(vk);
             activeRenderPass = VK_NULL_HANDLE;
+        }
+        if (pendingBreadcrumbBuffer != VK_NULL_HANDLE) {
+            vkCmdFillBuffer(vk, pendingBreadcrumbBuffer, pendingBreadcrumbOffset, 4, pendingBreadcrumbValue);
+            pendingBreadcrumbBuffer = VK_NULL_HANDLE;
         }
     }
 
@@ -4588,6 +4614,14 @@ namespace plume {
             featuresChain = &presentWaitFeatures;
         }
 
+        // AC6: VK_EXT_device_fault, for the driver's own description of a lost device.
+        VkPhysicalDeviceFaultFeaturesEXT faultFeatures = {};
+        if (supportedOptionalExtensions.find(VK_EXT_DEVICE_FAULT_EXTENSION_NAME) != supportedOptionalExtensions.end()) {
+            faultFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+            faultFeatures.pNext = featuresChain;
+            featuresChain = &faultFeatures;
+        }
+
         VkPhysicalDeviceRobustness2FeaturesEXT robustnessFeatures = {};
         const bool robustnessFound = supportedOptionalExtensions.find(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME) != supportedOptionalExtensions.end();
         if (robustnessFound) {
@@ -4722,6 +4756,18 @@ namespace plume {
 
             presentWaitFeatures.pNext = createDeviceChain;
             createDeviceChain = &presentWaitFeatures;
+        }
+
+        deviceFaultSupported = faultFeatures.deviceFault;
+        if (deviceFaultSupported) {
+            faultFeatures.pNext = createDeviceChain;
+            createDeviceChain = &faultFeatures;
+        }
+        // AC6_GPU_BREADCRUMBS=fill: the breadcrumbs as written without VK_AMD_buffer_marker (Intel's Windows driver).
+        {
+            const char *v = getenv("AC6_GPU_BREADCRUMBS");
+            bufferMarkerSupported = supportedOptionalExtensions.find(VK_AMD_BUFFER_MARKER_EXTENSION_NAME) != supportedOptionalExtensions.end() &&
+                !(v != nullptr && strcmp(v, "fill") == 0);
         }
 
         nullDescriptorSupported = robustnessFeatures.nullDescriptor;
@@ -5470,4 +5516,59 @@ namespace plume {
         return createdInterface->isValid() ? std::move(createdInterface) : nullptr;
     }
 #endif
+
+    // AC6: crash diagnostics.
+    bool VulkanBufferMarkers(RenderDevice *device) {
+        return device != nullptr && static_cast<VulkanDevice *>(device)->bufferMarkerSupported;
+    }
+
+    std::vector<std::string> VulkanDeviceFaultReport(RenderDevice *device) {
+        std::vector<std::string> lines;
+        VulkanDevice *d = static_cast<VulkanDevice *>(device);
+        if (d == nullptr || !d->deviceFaultSupported || vkGetDeviceFaultInfoEXT == nullptr) {
+            return lines;
+        }
+        VkDeviceFaultCountsEXT counts = {};
+        counts.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT;
+        const VkResult countResult = vkGetDeviceFaultInfoEXT(d->vk, &counts, nullptr);
+        if (countResult != VK_SUCCESS && countResult != VK_INCOMPLETE) {
+            char line[96];
+            snprintf(line, sizeof(line), "the driver gave no fault information (result %d)", int(countResult));
+            lines.emplace_back(line);
+            return lines;
+        }
+        std::vector<VkDeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
+        std::vector<VkDeviceFaultVendorInfoEXT> vendor(counts.vendorInfoCount);
+        VkDeviceFaultInfoEXT info = {};
+        info.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
+        info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
+        info.pVendorInfos = vendor.empty() ? nullptr : vendor.data();
+        counts.vendorBinarySize = 0;   // the vendor's binary dump is not asked for
+        const VkResult infoResult = vkGetDeviceFaultInfoEXT(d->vk, &counts, &info);
+        // VK_INCOMPLETE: the vendor's binary dump left out (not asked for); the rest is there.
+        if (infoResult != VK_SUCCESS && infoResult != VK_INCOMPLETE) {
+            char line[128];
+            snprintf(line, sizeof(line), "the driver gave no fault information (result %d, %u address(es), %u vendor record(s))",
+                int(infoResult), counts.addressInfoCount, counts.vendorInfoCount);
+            lines.emplace_back(line);
+            return lines;
+        }
+        lines.emplace_back(std::string("description: ") + (info.description[0] ? info.description : "(none)"));
+        static const char *const kAddressTypes[] = { "none", "read", "write", "execute", "instruction pointer (unknown)",
+            "instruction pointer (invalid)", "instruction pointer (fault)" };
+        for (const VkDeviceFaultAddressInfoEXT &a : addresses) {
+            char line[160];
+            const uint32_t type = uint32_t(a.addressType);
+            snprintf(line, sizeof(line), "address: %s at 0x%llX (precision 0x%llX)", type < 7 ? kAddressTypes[type] : "other",
+                (unsigned long long)a.reportedAddress, (unsigned long long)a.addressPrecision);
+            lines.emplace_back(line);
+        }
+        for (const VkDeviceFaultVendorInfoEXT &v : vendor) {
+            char line[320];
+            snprintf(line, sizeof(line), "vendor: %s (code 0x%llX, data 0x%llX)", v.description, (unsigned long long)v.vendorFaultCode,
+                (unsigned long long)v.vendorFaultData);
+            lines.emplace_back(line);
+        }
+        return lines;
+    }
 };
