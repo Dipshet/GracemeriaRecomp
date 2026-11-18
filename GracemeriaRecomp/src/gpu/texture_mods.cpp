@@ -122,7 +122,7 @@ uint32_t BlockBytes(int format)
     switch (RenderFormat(format))
     {
     case RenderFormat::BC1_UNORM: case RenderFormat::BC4_UNORM: return 8;
-    case RenderFormat::BC2_UNORM: case RenderFormat::BC3_UNORM: case RenderFormat::BC5_UNORM: return 16;
+    case RenderFormat::BC2_UNORM: case RenderFormat::BC3_UNORM: case RenderFormat::BC5_UNORM: case RenderFormat::BC7_UNORM: return 16;
     default: return 0;
     }
 }
@@ -388,6 +388,7 @@ bool ReadDds(const std::filesystem::path& path, Image& out, std::string& error)
             case 77: case 78: format = RenderFormat::BC3_UNORM; break;
             case 80: format = RenderFormat::BC4_UNORM; break;
             case 83: format = RenderFormat::BC5_UNORM; break;
+            case 97: case 98: case 99: format = RenderFormat::BC7_UNORM; break;   // (sRGB read as stored, as BC1-3's)
             case 87: case 88: case 91: format = RenderFormat::B8G8R8A8_UNORM; break;
             case 28: case 29: format = RenderFormat::R8G8B8A8_UNORM; break;
             case 61: format = RenderFormat::R8_UNORM; break;
@@ -395,7 +396,7 @@ bool ReadDds(const std::filesystem::path& path, Image& out, std::string& error)
             }
             break;
         }
-        default: error = "compression not supported (DXT1/3/5, ATI1/2 and DX10 BC1-5 / 8-bit RGBA are)"; return false;
+        default: error = "compression not supported (DXT1/3/5, ATI1/2 and DX10 BC1-5, BC7 / 8-bit RGBA are)"; return false;
         }
     }
     else if ((pf.flags & kDdpfRgb) && pf.bits == 32)

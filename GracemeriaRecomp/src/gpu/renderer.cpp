@@ -2343,7 +2343,7 @@ uint32_t ReplaceTexture(RenderCommandList& cl, HostTexture& t, const xenos::Text
         mods::MakeMips(image, uint32_t(std::bit_width(std::max(image.width, image.height))));
     const RenderFormat format = RenderFormat(image.format);
     const bool block = format == RenderFormat::BC1_UNORM || format == RenderFormat::BC2_UNORM || format == RenderFormat::BC3_UNORM ||
-        format == RenderFormat::BC4_UNORM || format == RenderFormat::BC5_UNORM;
+        format == RenderFormat::BC4_UNORM || format == RenderFormat::BC5_UNORM || format == RenderFormat::BC7_UNORM;
     const uint32_t bw = block ? 4 : 1;
     const uint32_t bytesPerBlock = format == RenderFormat::BC1_UNORM || format == RenderFormat::BC4_UNORM ? 8 : block ? 16
         : format == RenderFormat::R8_UNORM ? 1 : 4;
