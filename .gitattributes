@@ -1,0 +1,8 @@
+# The patches are applied to fetched checkouts: kept byte for byte (LF), whatever core.autocrlf says.
+*.patch -text
+# Batch files with Windows line ends in every checkout (cmd misreads some LF ones).
+*.bat text eol=crlf
+# Shell scripts with Unix line ends (a CRLF one fails in sh).
+*.sh text eol=lf
+# FSR 3.1's compiled passes byte for byte, as the build compares them with its own.
+/thirdparty/fsr3-shaders/*.h -text

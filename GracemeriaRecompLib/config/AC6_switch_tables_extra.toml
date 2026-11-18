@@ -1,0 +1,152 @@
+# Absolute jump tables missed by XenonAnalyse
+
+[[switch]]
+base = 0x820B54AC
+r = 6
+default = 0x0
+labels = [
+    0x820B54D4,
+    0x820B54DC,
+    0x820B54EC,
+    0x820B54E4,
+]
+
+[[switch]]
+base = 0x821713D0
+r = 8
+default = 0x0
+labels = [
+    0x82171400,
+    0x82171428,
+    0x82171434,
+    0x82171440,
+    0x8217144C,
+    0x82171458,
+]
+
+[[switch]]
+base = 0x82252164
+r = 26
+default = 0x82252AB0
+labels = [
+    0x822521B4,
+    0x822522A8,
+    0x822524C4,
+    0x8225245C,
+    0x822521B4,
+    0x82252AB0,
+    0x82252AB0,
+    0x82252AB0,
+    0x82252AB0,
+    0x82252AB0,
+    0x82252AB0,
+    0x82252AB0,
+    0x82252540,
+    0x822525A0,
+]
+
+[[switch]]
+base = 0x8225265C
+r = 26
+default = 0x82252AB0
+labels = [
+    0x822526AC,
+    0x8225277C,
+    0x82252814,
+    0x822527C0,
+    0x82252868,
+    0x82252AB0,
+    0x82252AB0,
+    0x82252AB0,
+    0x82252AB0,
+    0x82252AB0,
+    0x82252AB0,
+    0x82252AB0,
+    0x822529E8,
+    0x82252A38,
+]
+
+[[switch]]
+base = 0x82252C30
+r = 29
+default = 0x82252E04
+labels = [
+    0x82252C80,
+    0x82252CB4,
+    0x82252D1C,
+    0x82252CE8,
+    0x82252D50,
+    0x82252E04,
+    0x82252E04,
+    0x82252E04,
+    0x82252E04,
+    0x82252E04,
+    0x82252E04,
+    0x82252E04,
+    0x82252D84,
+    0x82252DB8,
+]
+
+[[switch]]
+base = 0x82291750
+r = 8
+default = 0x82291B98
+labels = [
+    0x8229177C,
+    0x822917CC,
+    0x82291804,
+    0x82291928,
+    0x82291960,
+]
+
+[[switch]]
+base = 0x82291D08
+r = 8
+default = 0x822920CC
+labels = [
+    0x82291D34,
+    0x82291D84,
+    0x82291DBC,
+    0x82291EE0,
+    0x82291F18,
+]
+
+[[switch]]
+base = 0x82292258
+r = 8
+default = 0x8229262C
+labels = [
+    0x82292284,
+    0x822922D4,
+    0x8229230C,
+    0x822923F0,
+    0x82292428,
+]
+
+[[switch]]
+base = 0x822AD730
+r = 11
+default = 0x822AD908
+labels = [
+    0x822AD75C,
+    0x822AD804,
+    0x822AD8DC,
+    0x822AD75C,
+    0x822AD75C,
+]
+
+[[switch]]
+base = 0x82309FE4
+r = 27
+default = 0x0
+labels = [
+    0x8230A01C,
+    0x8230A340,
+    0x8230A01C,
+    0x8230A340,
+    0x8230A340,
+    0x8230A2E4,
+    0x8230A47C,
+    0x8230A01C,
+]
+

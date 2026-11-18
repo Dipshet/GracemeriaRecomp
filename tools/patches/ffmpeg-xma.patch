@@ -1,0 +1,45 @@
+diff --git a/libavcodec/wmaprodec.c b/libavcodec/wmaprodec.c
+index dd33c56..db19d3e 100644
+--- a/libavcodec/wmaprodec.c
++++ b/libavcodec/wmaprodec.c
+@@ -424,7 +424,8 @@ static av_cold int decode_init(WMAProDecodeCtx *s, AVCodecContext *avctx, int nu
+     }
+ 
+     /** frame info */
+-    s->skip_frame = 1; /* skip first frame */
++    /* skip first frame (AC6: XMA hardware outputs it, keeping the stream's frame count) */
++    s->skip_frame = avctx->codec_id == AV_CODEC_ID_WMAPRO;
+ 
+     s->packet_loss = 1;
+     s->len_prefix  = (s->decode_flags & 0x40);
+@@ -1749,6 +1750,10 @@ static int decode_packet(AVCodecContext *avctx, WMAProDecodeCtx *s,
+             save_bits(s, gb, frame_size, 0);
+             if (!s->packet_loss)
+                 s->packet_done = !decode_frame(s, frame, got_frame_ptr);
++            /* AC6: an XMA frame that ends exactly at the end of the packet consumes it, so there is no
++               further call to find the packet done: the next packet's header would be read as frame data. */
++            if (avctx->codec_id != AV_CODEC_ID_WMAPRO && remaining_bits(s, gb) <= 0)
++                s->packet_done = 1;
+         } else if (!s->len_prefix
+                    && s->num_saved_bits > get_bits_count(&s->gb)) {
+             /** when the frames do not have a length prefix, we don't know
+@@ -1916,7 +1921,9 @@ static int xma_decode_packet(AVCodecContext *avctx, AVFrame *frame,
+             nb_samples = FFMIN(nb_samples, av_audio_fifo_size(s->samples[0][i]));
+         }
+ 
+-        if (!eof && avpkt->size)
++        /* AC6: the hold-back keeps several streams aligned; a single stream needs none, and with it the
++           last 4096 samples of every stream would stay in the decoder. */
++        if (!eof && avpkt->size && s->num_streams > 1)
+             nb_samples -= FFMIN(nb_samples, 4096);
+ 
+         /* copy samples from buffer to output if possible */
+@@ -2052,7 +2059,7 @@ static av_cold void flush(WMAProDecodeCtx *s)
+     s->packet_loss = 1;
+     s->skip_packets = 0;
+     s->eof_done = 0;
+-    s->skip_frame = 1;
++    s->skip_frame = s->avctx->codec_id == AV_CODEC_ID_WMAPRO; /* AC6: see decode_init */
+ }
+ 
+ /**

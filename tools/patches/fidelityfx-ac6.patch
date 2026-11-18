@@ -1,0 +1,127 @@
+diff --git a/sdk/include/FidelityFX/host/ffx_types.h b/sdk/include/FidelityFX/host/ffx_types.h
+index ca9bc37..74955c6 100644
+--- a/sdk/include/FidelityFX/host/ffx_types.h
++++ b/sdk/include/FidelityFX/host/ffx_types.h
+@@ -77,7 +77,13 @@
+ #define FFX_API __declspec(dllexport)
+ #endif // #if defined (FFX_GCC)
+ 
++// AC6: twice the size off Windows: the contexts hold wchar_t names, 4 bytes there against Windows' 2
++// (ffx_fsr3upscaler.cpp's static_assert failed on Linux).
++#if defined(_WIN32)
+ #define FFX_SDK_DEFAULT_CONTEXT_SIZE (1024 * 128)
++#else
++#define FFX_SDK_DEFAULT_CONTEXT_SIZE (1024 * 256)
++#endif
+ 
+ /// Maximum supported number of simultaneously bound SRVs.
+ ///
+diff --git a/sdk/src/backends/vk/ffx_vk.cpp b/sdk/src/backends/vk/ffx_vk.cpp
+index d914479..90df8b9 100644
+--- a/sdk/src/backends/vk/ffx_vk.cpp
++++ b/sdk/src/backends/vk/ffx_vk.cpp
+@@ -280,14 +280,14 @@ FFX_API size_t ffxGetScratchMemorySizeVK(VkPhysicalDevice physicalDevice, size_t
+         vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &numExtensions, nullptr);
+ 
+     uint32_t extensionPropArraySize = sizeof(VkExtensionProperties) * numExtensions;
+-    uint32_t gpuJobDescArraySize = FFX_ALIGN_UP(maxContexts * FFX_MAX_GPU_JOBS * sizeof(FfxGpuJobDescription), sizeof(uint32_t));
+-    uint32_t resourceViewArraySize = FFX_ALIGN_UP(((maxContexts * FFX_MAX_QUEUED_FRAMES * FFX_MAX_RESOURCE_COUNT * 2) + FFX_MAX_BINDLESS_DESCRIPTOR_COUNT) * sizeof(BackendContext_VK::VkResourceView), sizeof(uint32_t));
+-    uint32_t stagingRingBufferArraySize = FFX_ALIGN_UP(maxContexts * FFX_CONSTANT_BUFFER_RING_BUFFER_SIZE, sizeof(uint32_t));
+-    uint32_t pipelineArraySize = FFX_ALIGN_UP(maxContexts * FFX_MAX_PASS_COUNT * sizeof(BackendContext_VK::PipelineLayout), sizeof(uint32_t));
+-    uint32_t resourceArraySize = FFX_ALIGN_UP(maxContexts * FFX_MAX_RESOURCE_COUNT * sizeof(BackendContext_VK::Resource), sizeof(uint32_t));
+-    uint32_t contextArraySize = FFX_ALIGN_UP(maxContexts * sizeof(BackendContext_VK::EffectContext), sizeof(uint32_t));
++    uint32_t gpuJobDescArraySize = FFX_ALIGN_UP(maxContexts * FFX_MAX_GPU_JOBS * sizeof(FfxGpuJobDescription), alignof(std::max_align_t));   // AC6: aligned for its structs
++    uint32_t resourceViewArraySize = FFX_ALIGN_UP(((maxContexts * FFX_MAX_QUEUED_FRAMES * FFX_MAX_RESOURCE_COUNT * 2) + FFX_MAX_BINDLESS_DESCRIPTOR_COUNT) * sizeof(BackendContext_VK::VkResourceView), alignof(std::max_align_t));   // AC6: aligned for its structs
++    uint32_t stagingRingBufferArraySize = FFX_ALIGN_UP(maxContexts * FFX_CONSTANT_BUFFER_RING_BUFFER_SIZE, alignof(std::max_align_t));   // AC6: aligned for its structs
++    uint32_t pipelineArraySize = FFX_ALIGN_UP(maxContexts * FFX_MAX_PASS_COUNT * sizeof(BackendContext_VK::PipelineLayout), alignof(std::max_align_t));   // AC6: aligned for its structs
++    uint32_t resourceArraySize = FFX_ALIGN_UP(maxContexts * FFX_MAX_RESOURCE_COUNT * sizeof(BackendContext_VK::Resource), alignof(std::max_align_t));   // AC6: aligned for its structs
++    uint32_t contextArraySize = FFX_ALIGN_UP(maxContexts * sizeof(BackendContext_VK::EffectContext), alignof(std::max_align_t));   // AC6: aligned for its structs
+     
+-    return FFX_ALIGN_UP(sizeof(BackendContext_VK) + extensionPropArraySize + gpuJobDescArraySize + resourceViewArraySize + stagingRingBufferArraySize +
++    return FFX_ALIGN_UP(sizeof(BackendContext_VK) + alignof(std::max_align_t) /* AC6: the arrays aligned after it */ + extensionPropArraySize + gpuJobDescArraySize + resourceViewArraySize + stagingRingBufferArraySize +
+                             pipelineArraySize + resourceArraySize + contextArraySize,
+                         sizeof(uint64_t));
+ }
+@@ -402,13 +402,18 @@ uint32_t findMemoryTypeIndex(VkPhysicalDevice physicalDevice, VkMemoryRequiremen
+     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+ 
+     uint32_t bestCandidate = UINT32_MAX;
++    uint32_t visibleCandidate = UINT32_MAX;   // AC6: a host-visible device-local type, for devices with no other
+ 
+     for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+         if ((memRequirements.memoryTypeBits & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & requestedProperties)) {
+ 
+             // if just device-local memory is requested, make sure this is the invisible heap to prevent over-subscribing the local heap
+             if (requestedProperties == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT && (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
++            {
++                if (visibleCandidate == UINT32_MAX)
++                    visibleCandidate = i;
+                 continue;
++            }
+ 
+             bestCandidate = i;
+             outProperties = memProperties.memoryTypes[i].propertyFlags;
+@@ -419,6 +424,14 @@ uint32_t findMemoryTypeIndex(VkPhysicalDevice physicalDevice, VkMemoryRequiremen
+         }
+     }
+ 
++    // AC6: unified-memory devices (CPU renderers such as llvmpipe, some integrated GPUs) have only host-visible
++    // device-local types: use one rather than fail the allocation.
++    if (bestCandidate == UINT32_MAX && visibleCandidate != UINT32_MAX)
++    {
++        bestCandidate = visibleCandidate;
++        outProperties = memProperties.memoryTypes[visibleCandidate].propertyFlags;
++    }
++
+     return bestCandidate;
+ }
+ 
+@@ -1402,13 +1415,13 @@ FfxErrorCode CreateBackendContextVK(FfxInterface* backendInterface, FfxEffect ef
+         new (&backendContext->uniformBufferMutex) std::mutex();
+ 
+         // Map all of our pointers
+-        uint32_t gpuJobDescArraySize   = FFX_ALIGN_UP(backendContext->maxEffectContexts * FFX_MAX_GPU_JOBS * sizeof(FfxGpuJobDescription), sizeof(uint32_t));
+-        uint32_t resourceViewArraySize = FFX_ALIGN_UP(((backendContext->maxEffectContexts * FFX_MAX_QUEUED_FRAMES * FFX_MAX_RESOURCE_COUNT * 2) + FFX_MAX_BINDLESS_DESCRIPTOR_COUNT) * sizeof(BackendContext_VK::VkResourceView), sizeof(uint32_t));
+-        uint32_t stagingRingBufferArraySize = FFX_ALIGN_UP(backendContext->maxEffectContexts * FFX_CONSTANT_BUFFER_RING_BUFFER_SIZE, sizeof(uint32_t));
+-        uint32_t pipelineArraySize = FFX_ALIGN_UP(backendContext->maxEffectContexts * FFX_MAX_PASS_COUNT * sizeof(BackendContext_VK::PipelineLayout), sizeof(uint32_t));
+-        uint32_t resourceArraySize = FFX_ALIGN_UP(backendContext->maxEffectContexts * FFX_MAX_RESOURCE_COUNT * sizeof(BackendContext_VK::Resource), sizeof(uint32_t));
+-        uint32_t contextArraySize = FFX_ALIGN_UP(backendContext->maxEffectContexts * sizeof(BackendContext_VK::EffectContext), sizeof(uint32_t));
+-        uint8_t* pMem = (uint8_t*)((BackendContext_VK*)(backendContext + 1));
++        uint32_t gpuJobDescArraySize   = FFX_ALIGN_UP(backendContext->maxEffectContexts * FFX_MAX_GPU_JOBS * sizeof(FfxGpuJobDescription), alignof(std::max_align_t));   // AC6: aligned for its structs
++        uint32_t resourceViewArraySize = FFX_ALIGN_UP(((backendContext->maxEffectContexts * FFX_MAX_QUEUED_FRAMES * FFX_MAX_RESOURCE_COUNT * 2) + FFX_MAX_BINDLESS_DESCRIPTOR_COUNT) * sizeof(BackendContext_VK::VkResourceView), alignof(std::max_align_t));   // AC6: aligned for its structs
++        uint32_t stagingRingBufferArraySize = FFX_ALIGN_UP(backendContext->maxEffectContexts * FFX_CONSTANT_BUFFER_RING_BUFFER_SIZE, alignof(std::max_align_t));   // AC6: aligned for its structs
++        uint32_t pipelineArraySize = FFX_ALIGN_UP(backendContext->maxEffectContexts * FFX_MAX_PASS_COUNT * sizeof(BackendContext_VK::PipelineLayout), alignof(std::max_align_t));   // AC6: aligned for its structs
++        uint32_t resourceArraySize = FFX_ALIGN_UP(backendContext->maxEffectContexts * FFX_MAX_RESOURCE_COUNT * sizeof(BackendContext_VK::Resource), alignof(std::max_align_t));   // AC6: aligned for its structs
++        uint32_t contextArraySize = FFX_ALIGN_UP(backendContext->maxEffectContexts * sizeof(BackendContext_VK::EffectContext), alignof(std::max_align_t));   // AC6: aligned for its structs
++        uint8_t* pMem = (uint8_t*)FFX_ALIGN_UP(uintptr_t(backendContext + 1), alignof(std::max_align_t));   // AC6: aligned
+ 
+         // Map gpu job array
+         backendContext->pGpuJobs = (FfxGpuJobDescription*)pMem;
+@@ -4153,6 +4166,9 @@ static FfxErrorCode executeGpuJobClearFloat(BackendContext_VK* backendContext, F
+     return FFX_OK;
+ }
+ 
++// AC6: called before each job (its label) and after the last (nullptr) when set: the port's per-pass GPU timing.
++void (*ac6FfxJobHook)(VkCommandBuffer commandBuffer, const wchar_t* label) = nullptr;
++
+ FfxErrorCode ExecuteGpuJobsVK(FfxInterface* backendInterface, FfxCommandList commandList, FfxUInt32 effectContextId)
+ {
+     FFX_ASSERT(nullptr != backendInterface);
+@@ -4167,6 +4183,8 @@ FfxErrorCode ExecuteGpuJobsVK(FfxInterface* backendInterface, FfxCommandList com
+     for (uint32_t i = 0; i < backendContext->gpuJobCount; ++i)
+     {
+         FfxGpuJobDescription* gpuJob = &backendContext->pGpuJobs[i];
++        if (ac6FfxJobHook && gpuJob->jobType != FFX_GPU_JOB_BARRIER)   // AC6
++            ac6FfxJobHook(vkCommandBuffer, gpuJob->jobLabel);
+ 
+         // If we have a label for the job, drop a marker for it
+         if (gpuJob->jobLabel[0]) {
+@@ -4203,6 +4221,8 @@ FfxErrorCode ExecuteGpuJobsVK(FfxInterface* backendInterface, FfxCommandList com
+             endMarkerVK(backendContext, vkCommandBuffer);
+         }
+     }
++    if (ac6FfxJobHook)   // AC6
++        ac6FfxJobHook(vkCommandBuffer, nullptr);
+ 
+     // check the execute function returned cleanly.
+     FFX_RETURN_ON_ERROR(

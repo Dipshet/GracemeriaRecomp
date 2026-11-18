@@ -1,0 +1,785 @@
+# XenonRecomp configuration for Ace Combat 6: Fires of Liberation (default.xex)
+# Image: base 0x82000000, size 0xAA0000, entry 0x821F5ED0
+# Code sections: .text 0x82090000-0x823D0C6C, BINK 0x823D0E00-0x823E15F8
+
+[main]
+file_path = "../../default.xex"
+out_directory_path = "../ppc"
+switch_table_file_path = "AC6_switch_tables.toml"
+
+# Optimisations (see the XenonRecomp README).
+skip_lr = true
+skip_msr = true
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_argument_as_local = false   # off: SEH funclets get their frame pointer in r12 (e.g. sub_821FB21C)
+non_volatile_as_local = true
+
+# Register save/restore helpers (each byte pattern from the XenonRecomp README matched exactly once).
+restgprlr_14_address = 0x82382A30
+savegprlr_14_address = 0x823829E0
+restfpr_14_address   = 0x82383F7C
+savefpr_14_address   = 0x82383F30
+restvmx_14_address   = 0x823853E8
+savevmx_14_address   = 0x82385150
+restvmx_64_address   = 0x8238547C
+savevmx_64_address   = 0x823851E4
+
+# longjmp restores the jmp_buf and falls back to RtlUnwind. setjmp follows it (unreferenced in this build).
+longjmp_address = 0x823CA690
+setjmp_address  = 0x823CA9B0
+
+# Functions with an exception handler (.pdata ExceptionFlag) are preceded by 8 bytes of data:
+# the handler address and its scope table. Skip them so the linear sweep doesn't decode them
+# as code and spawn bogus overlapping functions.
+invalid_instructions = [
+    { data = 0x00000000, size = 4 }, # Padding
+    { data = 0x823D02EC, size = 8 }, # __C_specific_handler (33 functions)
+    { data = 0x82384CD0, size = 8 }, # Frame handler (5 functions)
+    { data = 0x8238F420, size = 8 }, # Frame handler (1 function)
+]
+
+# Functions that use registers outside the ABI keep the non-volatile registers in the context: SEH
+# funclets (entered with the parent frame in r12 or another register, using the parent's registers) and
+# their callers, and every function touching v92-v96 (the game keeps its current matrix in v92-v95 across
+# calls). Found by scanning the image for SEH funclets and for functions that read non-volatile registers they
+# didn't save.
+context_register_functions = [
+    0x820A92D0, 0x820F98C0, 0x820F9B70, 0x82155A68, 0x82175838, 0x821F9E10,
+    0x821FA67C, 0x821FA6A4, 0x821FA6F8, 0x821FA964, 0x821FA98C, 0x821FA9E0,
+    0x821FB1FC, 0x821FB21C, 0x821FFFCC, 0x82200044, 0x82200104, 0x822EED80,
+    0x82331FC0, 0x82331FF0, 0x82332010, 0x82334960, 0x82334BB8, 0x82334E90,
+    0x82335BB0, 0x82335BB8, 0x82335C38, 0x82335C78, 0x82335C80, 0x82335D80,
+    0x82335E40, 0x82335F20, 0x82336000, 0x823360E0, 0x82336138, 0x823361A0,
+    0x823361D8, 0x823362A8, 0x8233D8F0, 0x8233DA80, 0x8233DB58, 0x8233DC08,
+    0x8233DCB0, 0x8233DE48, 0x8233FC48, 0x8233FD40, 0x8233FD80, 0x8233FE10,
+    0x8233FEB0, 0x823405F8, 0x82340650, 0x82340778, 0x82340EC0, 0x82340FC8,
+    0x8234A170, 0x8234ADA8, 0x8234AE10, 0x8234AF08, 0x8234BD30, 0x8234BD90,
+    0x8234BED8, 0x82354B68, 0x82354C08, 0x823554A8, 0x82355618, 0x82355980,
+    0x82355B50, 0x82355DE0, 0x82356260, 0x82356A68, 0x823648A0, 0x82364B78,
+    0x82380CE8, 0x82383250, 0x82383350, 0x82383370, 0x823842A0, 0x82384480,
+    0x823844A0, 0x82384808, 0x82384954, 0x82384980, 0x823849F0, 0x82384A8C,
+    0x82384AAC, 0x82384E00, 0x823850B0, 0x82389898, 0x823899A8, 0x8238A750,
+    0x8238A9F4, 0x8238AA14, 0x8238B130, 0x8238B26C, 0x8238B28C, 0x8238B2D0,
+    0x8238B400, 0x8238B420, 0x8238B948, 0x8238C0B8, 0x8238C378, 0x8238D0E8,
+    0x8238D228, 0x8238D248, 0x8238EE70, 0x8238EF34, 0x8238EF54, 0x8238F100,
+    0x8238F1C8, 0x823905F8, 0x82390718, 0x82390738, 0x823BA9A8, 0x823BC180,
+    0x823BC718, 0x823C8380, 0x823C8618, 0x823C86F8, 0x823CA690, 0x823CA9B0,
+    0x823CADA0, 0x823CAEA4, 0x823CAED0,
+]
+
+# ---- explicit function boundaries ----
+# Functions whose boundaries XenonAnalyse gets wrong
+functions = [
+    { address = 0x820943B0, size = 0x90 },
+    { address = 0x820967B0, size = 0x88 },
+    { address = 0x820CF8D8, size = 0x1F8 },
+    { address = 0x820F74E0, size = 0x68 },
+    { address = 0x82118AD0, size = 0xC4 },
+    { address = 0x82119D78, size = 0x18C },
+    { address = 0x82119F08, size = 0x1E0 },
+    { address = 0x8213D5B0, size = 0xC4 },
+    { address = 0x8214D330, size = 0x270 },
+    { address = 0x82159418, size = 0x29C },
+    { address = 0x82159860, size = 0xC8 },
+    { address = 0x8215A4F0, size = 0x178 },
+    { address = 0x82160FC0, size = 0xC4 },
+    { address = 0x82166710, size = 0x8C },
+    { address = 0x8216D7C8, size = 0xA4 },
+    { address = 0x821713D0, size = 0x94 },
+    { address = 0x8218E990, size = 0x8B0 },
+    { address = 0x82191120, size = 0xCC },
+    { address = 0x82196590, size = 0x90 },
+    { address = 0x821974E0, size = 0x61C },
+    { address = 0x82197B00, size = 0x234 },
+    { address = 0x821998F8, size = 0x1B4 },
+    { address = 0x821A9A58, size = 0x74 },
+    { address = 0x821A9AD0, size = 0x404 },
+    { address = 0x821B2250, size = 0xE0 },
+    { address = 0x821B2338, size = 0x15C },
+    { address = 0x821B3330, size = 0xA4 },
+    { address = 0x821B3D20, size = 0x74 },
+    { address = 0x821B4F60, size = 0xBC },
+    { address = 0x821B5050, size = 0x178 },
+    { address = 0x821B51C8, size = 0x210 },
+    { address = 0x821B68D8, size = 0x428 },
+    { address = 0x821B6D00, size = 0x1C4 },
+    { address = 0x821B74C0, size = 0x15C },
+    { address = 0x821B8530, size = 0xC4 },
+    { address = 0x821C9FB0, size = 0x3A0 },
+    { address = 0x821D0250, size = 0x130 },
+    { address = 0x821D7390, size = 0x118 },
+    { address = 0x821D86A0, size = 0x38 },
+    { address = 0x82214D70, size = 0x22C },
+    { address = 0x82214FA0, size = 0x138 },
+    { address = 0x822150F8, size = 0x54 },
+    { address = 0x82215150, size = 0x70 },
+    { address = 0x82221D20, size = 0xB0 },
+    { address = 0x82254210, size = 0x90 },
+    { address = 0x82275840, size = 0x1E0 },
+    { address = 0x822B2688, size = 0x88 },
+    { address = 0x822B2710, size = 0xF4 },
+    { address = 0x822C8C78, size = 0x230 },
+    { address = 0x822C9570, size = 0x114 },
+    { address = 0x822CFCE8, size = 0x330 },
+    { address = 0x822D1DC0, size = 0x1C0 },
+    { address = 0x822D2DB0, size = 0x1C0 },
+    { address = 0x822DB0B0, size = 0x1C0 },
+    { address = 0x822DBC88, size = 0x1B8 },
+    { address = 0x822DFF58, size = 0x28C },
+    { address = 0x822E0AA0, size = 0x1B0 },
+    { address = 0x822E2590, size = 0x28C },
+    { address = 0x822F6148, size = 0xA4 },
+    { address = 0x822F6FB0, size = 0x170 },
+    { address = 0x822F8818, size = 0x170 },
+    { address = 0x822FA350, size = 0x1C0 },
+    { address = 0x822FA510, size = 0x71C },
+    { address = 0x82318128, size = 0xE08 },
+    { address = 0x8231F598, size = 0x224 },
+    { address = 0x8231F7C0, size = 0x1EC },
+    { address = 0x8231F9B0, size = 0x1C4 },
+    { address = 0x8231FB78, size = 0xC0 },
+    { address = 0x8231FC38, size = 0x1B4 },
+    { address = 0x8231FDF0, size = 0x154 },
+    { address = 0x82341718, size = 0xCC },
+    { address = 0x82349AC0, size = 0x9C },
+    { address = 0x8235A018, size = 0x9C },
+    { address = 0x823830F0, size = 0xA0 },
+]
+
+# ---- mid-asm hooks ----
+# Hooks read registers here instead of from the context, which the register-as-local optimisations above leave
+# out of date (GracemeriaRecomp/src/job_order.cpp, gpu/d3d.cpp).
+
+# The twelve JobPoolB::Submit (0x821D4A78) storage sites: the op code is stored to [job+4] before the call
+# (the title update does the same). 0x821C5A78 has it in r29, the others are constants.
+[[midasm_hook]]
+name = "StorageSubmitOpInR29"
+address = 0x821C5A78
+registers = ["r5", "r29"]
+
+[[midasm_hook]]
+name = "StorageSubmitOp13"
+address = 0x821C7538
+registers = ["r5"]
+
+[[midasm_hook]]
+name = "StorageSubmitOp8"
+address = 0x821C8EC4
+registers = ["r5"]
+
+[[midasm_hook]]
+name = "StorageSubmitOp9"
+address = 0x821C8F78
+registers = ["r5"]
+
+[[midasm_hook]]
+name = "StorageSubmitOp16"
+address = 0x821C9298
+registers = ["r5"]
+
+[[midasm_hook]]
+name = "StorageSubmitOp2"
+address = 0x821D3C8C
+registers = ["r5"]
+
+[[midasm_hook]]
+name = "StorageSubmitOp3"
+address = 0x821D3D0C
+registers = ["r5"]
+
+[[midasm_hook]]
+name = "StorageSubmitOp6"
+address = 0x821D3DC8
+registers = ["r5"]
+
+[[midasm_hook]]
+name = "StorageSubmitOp7"
+address = 0x821D3E58
+registers = ["r5"]
+
+[[midasm_hook]]
+name = "StorageSubmitOp10"
+address = 0x821D3F70
+registers = ["r5"]
+
+[[midasm_hook]]
+name = "StorageSubmitOp11"
+address = 0x821D4030
+registers = ["r5"]
+
+[[midasm_hook]]
+name = "StorageSubmitOp12"
+address = 0x821D40F0
+registers = ["r5"]
+
+# The call that patches the vertex shader in place and binds the draw's record (GracemeriaRecomp/src/gpu/d3d.cpp).
+[[midasm_hook]]
+name = "VertexShaderBindCall"
+address = 0x821ED594
+registers = []
+
+# ---- frame rate fixes (GracemeriaRecomp/src/game/frame_rate_fixes.cpp) ----
+[[midasm_hook]]
+name = "FpsFlightSpeedBegin"
+address = 0x82304714
+registers = ["f8"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsFlightSpeedEnd"
+address = 0x82304AA4
+registers = ["r30", "r31"]
+
+[[midasm_hook]]
+name = "FpsFlightPathWeight"
+address = 0x82304E00
+registers = ["f12"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsFlightPathDrop"
+address = 0x82304F40
+registers = ["f9"]
+
+[[midasm_hook]]
+name = "FpsGroundPathWeight"
+address = 0x8230590C
+registers = ["f0"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsImpactKnock"
+address = 0x823063C0
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsRudderRamp"
+address = 0x82329E28
+registers = ["f0"]
+
+[[midasm_hook]]
+name = "FpsRudderReturn"
+address = 0x82329E7C
+registers = ["f13"]
+
+[[midasm_hook]]
+name = "FpsNpcRateDecay"
+address = 0x82328B6C
+registers = ["f0", "f30"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsNpcRateDecay"
+address = 0x82328C50
+registers = ["f0", "f30"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsNpcRateDecay"
+address = 0x82328D14
+registers = ["f0", "f30"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsNpcSmoothing792"
+address = 0x822936B8
+registers = ["r31", "f10", "f12"]
+
+[[midasm_hook]]
+name = "FpsNpcSmoothing796"
+address = 0x822936C0
+registers = ["r31", "f9", "f0"]
+
+[[midasm_hook]]
+name = "FpsGroundHeadingStep"
+address = 0x822A70F0
+registers = ["f0"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsSeaStep"
+address = 0x82101300
+registers = ["f13"]
+
+[[midasm_hook]]
+name = "FpsSeaStep"
+address = 0x82101314
+registers = ["f13"]
+
+[[midasm_hook]]
+name = "FpsSeaStep"
+address = 0x82101338
+registers = ["f13"]
+
+[[midasm_hook]]
+name = "FpsSeaStep"
+address = 0x8210135C
+registers = ["f13"]
+
+[[midasm_hook]]
+name = "FpsMapScroll"
+address = 0x820FE718
+registers = ["f13"]
+
+[[midasm_hook]]
+name = "FpsGunCooldown"
+address = 0x8222C3F8
+registers = ["r31", "f0"]
+
+[[midasm_hook]]
+name = "FpsNpcWeaponCooldown"
+address = 0x822A5B28
+registers = ["r24", "r31", "f0"]
+
+[[midasm_hook]]
+name = "FpsBurstResetA"
+address = 0x822F66FC
+registers = ["r31", "f0"]
+
+[[midasm_hook]]
+name = "FpsBurstResetB"
+address = 0x822F7474
+registers = ["r31", "f0"]
+
+[[midasm_hook]]
+name = "FpsAiCadenceTick"
+address = 0x8226D394
+registers = ["r10"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsAiCadenceGate"
+address = 0x822A3130
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsAiCadenceGate"
+address = 0x822A7248
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsAiCadenceGate"
+address = 0x82292AE8
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsSwgAdvance"
+address = 0x820D9068
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsMissileReloadSave"
+address = 0x8222CABC
+registers = ["r11", "r31"]
+
+[[midasm_hook]]
+name = "FpsMissileReloadReset"
+address = 0x8222CAD0
+registers = ["r29", "r31", "f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsMissileReloadKeepCarry"
+address = 0x8222CC18
+registers = ["r9", "f0", "f29"]
+jump_address_on_true = 0x8222CC1C
+
+[[midasm_hook]]
+name = "FpsReplayRecordCadence"
+address = 0x82254D08
+registers = []
+jump_address_on_true = 0x82255034
+
+[[midasm_hook]]
+name = "FpsSubCameraGain"
+address = 0x822F1234
+registers = ["f0", "f12", "f13"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsSubCameraFollow"
+address = 0x822F125C
+registers = ["f0", "f31"]
+
+[[midasm_hook]]
+name = "FpsReplayCameraZoom"
+address = 0x822769B0
+registers = ["f13"]
+
+[[midasm_hook]]
+name = "FpsReplayCameraRotate"
+address = 0x82276AA0
+registers = ["f28", "f31"]
+
+[[midasm_hook]]
+name = "FpsNpcVaporCadence"
+address = 0x822BE3D8
+registers = []
+jump_address_on_true = 0x822BE44C
+
+[[midasm_hook]]
+name = "FpsShoulderVaporRoll"
+address = 0x822BF8D4
+registers = []
+jump_address_on_true = 0x822BF92C
+
+[[midasm_hook]]
+name = "FpsMissileSmokeWarmup"
+address = 0x822BDD74
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsSubmunitionInterval"
+address = 0x822DE2E0
+registers = ["r31", "f0"]
+
+# ---- cutscenes at the unlocked frame rate (AC6_CUTSCENE_UNLOCK, GracemeriaRecomp/src/game/cutscene_unlock.cpp) ----
+[[midasm_hook]]
+name = "FpsCutsceneStep"
+address = 0x823675E8
+registers = ["f13"]
+
+[[midasm_hook]]
+name = "FpsCutsceneEvalBegin"
+address = 0x823665B4
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutsceneEvalEnd"
+address = 0x823665CC
+registers = []
+
+[[midasm_hook]]
+name = "FpsCutsceneSampleTime"
+address = 0x82118BAC
+registers = ["f1", "r4"]
+
+[[midasm_hook]]
+name = "FpsCutsceneSampleCall"
+address = 0x82126150
+registers = ["f1", "r3"]
+
+[[midasm_hook]]
+name = "FpsCutsceneSampleCall"
+address = 0x8212664C
+registers = ["f1", "r3"]
+
+[[midasm_hook]]
+name = "FpsCutsceneSampleCall"
+address = 0x821267C0
+registers = ["f1", "r3"]
+
+[[midasm_hook]]
+name = "FpsCutsceneSampleCall"
+address = 0x82126998
+registers = ["f1", "r3"]
+
+[[midasm_hook]]
+name = "FpsCutsceneSampleCall"
+address = 0x82126AD0
+registers = ["f1", "r3"]
+
+[[midasm_hook]]
+name = "FpsCutsceneSampleCall"
+address = 0x82126BF0
+registers = ["f1", "r3"]
+
+[[midasm_hook]]
+name = "FpsCutsceneSampleCall"
+address = 0x82127268
+registers = ["f1", "r3"]
+
+[[midasm_hook]]
+name = "FpsCutsceneSampleCall"
+address = 0x821273BC
+registers = ["f1", "r3"]
+
+[[midasm_hook]]
+name = "FpsCutsceneSampleCall"
+address = 0x821274B8
+registers = ["f1", "r3"]
+
+[[midasm_hook]]
+name = "FpsCutscenePoseTime"
+address = 0x8212AAE0
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutscenePoseTime"
+address = 0x8212AC30
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutscenePoseTime"
+address = 0x82136904
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutscenePoseTime"
+address = 0x82135BA4
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutsceneClock"
+address = 0x82184C58
+registers = ["f1"]
+
+[[midasm_hook]]
+name = "FpsCutsceneClock"
+address = 0x8218616C
+registers = ["f1"]
+
+[[midasm_hook]]
+name = "FpsCutsceneFrameStep"
+address = 0x8219566C
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutsceneClock"
+address = 0x821348B8
+registers = ["f0"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutsceneClock"
+address = 0x82134940
+registers = ["f0"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutsceneClock"
+address = 0x82134A0C
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutsceneClock"
+address = 0x82134A3C
+registers = ["f13"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutsceneClock"
+address = 0x821353B8
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutsceneFrameStep"
+address = 0x82131CC0
+registers = ["f13"]
+
+[[midasm_hook]]
+name = "FpsCutsceneFrameStep"
+address = 0x82131D14
+registers = ["f13"]
+
+# ---- the 60 FPS screens unlocked (AC6_MENU_UNLOCK, GracemeriaRecomp/src/game/frame_rate_fixes.cpp) ----
+[[midasm_hook]]
+name = "FpsHangarUpdate"
+address = 0x82146EC8
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsHangarUpdate"
+address = 0x82146F48
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsAircraftSlotWait"
+address = 0x82147900
+registers = ["r10"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsSpiderMorph"
+address = 0x82151030
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsCutsceneCameraTrace"
+address = 0x82125B5C
+registers = ["r1", "r28"]
+
+[[midasm_hook]]
+name = "FpsHangarDrawTail"
+address = 0x82149E60
+registers = []
+jump_address_on_true = 0x82149F58
+
+[[midasm_hook]]
+name = "FpsHangarCamLookat"
+address = 0x82142E30
+registers = ["f0", "f30"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsHangarCamEye"
+address = 0x82142E94
+registers = ["f0", "f30"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsModelChannelStep"
+address = 0x822EED14
+registers = ["r31", "f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsAirDrift"
+address = 0x822BA724
+registers = ["f0"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsAirDrift"
+address = 0x822BFE8C
+registers = ["f0"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsBurnerFlicker"
+address = 0x822BA2A4
+registers = ["f13", "f28"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FpsBurnerFlicker"
+address = 0x822BAAA8
+registers = ["f13", "f31"]
+after_instruction = true
+
+# ---- Language, field of view and wide outputs (GracemeriaRecomp/src/game/widescreen.cpp unless noted) ----
+
+# The text bundle loader (game/language.cpp): r28 = the text bundle just chosen (2 Japanese, 3 English) -> the language
+# setting's bundle.
+[[midasm_hook]]
+name = "TextBundleOverride"
+address = 0x821BB1E0
+registers = ["r28"]
+after_instruction = true
+
+# The FOV option (AC6_FOV): the three render views' (EffectScene::RenderView 0x82099370 and its twins 0x8219DFB8 /
+# 0x821A1A88) reads of the main camera's field of view for their object jobs (0x820A15F8, f1), f1 just loaded.
+[[midasm_hook]]
+name = "FovJobRead"
+address = 0x820995A8
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FovJobRead"
+address = 0x8209960C
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FovJobRead"
+address = 0x8219E1F0
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FovJobRead"
+address = 0x8219E254
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FovJobRead"
+address = 0x821A1CDC
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FovJobRead"
+address = 0x821A1D40
+registers = ["f1"]
+after_instruction = true
+
+# The FOV option (AC6_FOV): the HUD's two reads of the main camera's field of view, f13 just loaded.
+[[midasm_hook]]
+name = "FovHudRead"
+address = 0x8224A308
+registers = ["f13"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "FovHudRead"
+address = 0x8224B924
+registers = ["f13"]
+after_instruction = true
+
+# Hud_DrawOffscreenArrow: f0 = 640 / 360 (the canvas aspect) -> the wide screen's.
+[[midasm_hook]]
+name = "WideArrowAspect"
+address = 0x8223ECD8
+registers = ["f0"]
+
+# The Bink frame quad: r11 = its three clip-space vertices, just written -> pillarboxed to 16:9.
+[[midasm_hook]]
+name = "WideMovieQuad"
+address = 0x821D8F64
+registers = ["r11"]
+
+# Draw2DLayers queueing a layer's viewport / ortho command: r4 = the copy, r31 = the layer.
+[[midasm_hook]]
+name = "WideLayerViewport"
+address = 0x82138530
+registers = ["r4", "r31"]
+
+[[midasm_hook]]
+name = "WideLayerOrtho"
+address = 0x821385A8
+registers = ["r4", "r31"]
+
+# EffectScene::RenderView's HUD snapshot: S = r26, its projection (S+32) just copied -> the main view's.
+[[midasm_hook]]
+name = "WideHudProjection"
+address = 0x82099460
+registers = ["r26"]
+
+# Draw2DLayers queueing its first command (0x82138048, game/ui_layers.cpp): r4 = 0 -> the frame slot its vertices go to.
+[[midasm_hook]]
+name = "UiLayersSlotArg"
+address = 0x8213844C
+registers = ["r4"]
+
+# The 2D layers' first command, on the render thread (game/ui_layers.cpp): r11 = the frame slot it reads, r4 = its
+# argument.
+[[midasm_hook]]
+name = "UiLayersSlotUse"
+address = 0x8213807C
+registers = ["r4", "r11"]
+
+# main_loop before its frame end (bl 0x82331E78, game/frame_handoff.cpp): the worker's release is held until the frame
+# slot has moved.
+[[midasm_hook]]
+name = "FrameHandoffLoopEnd"
+address = 0x821D7EB4
+registers = []
+
+# CAce6Hud::Draw at its picture-in-picture label block (the target's type, name, damage bar): the HUD position option
+# (AC6_HUD_EDGES) moves only that block's output with the window.
+[[midasm_hook]]
+name = "HudPipLabelBegin"
+address = 0x8223E2BC
+registers = []
