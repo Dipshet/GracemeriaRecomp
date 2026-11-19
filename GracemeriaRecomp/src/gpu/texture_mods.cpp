@@ -20,6 +20,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+const unsigned char* EmbeddedFileData(const char* name, size_t* size);   // (generated: tools/cmake/embed_files.cmake)
+
 namespace ac6::gpu::mods {
 
 using plume::RenderFormat;
@@ -65,6 +67,22 @@ bool ParseHash(const std::string& stem, uint64_t& hash)
     return stem.size() == 16 || !std::isxdigit(uint8_t(stem[16]));
 }
 
+// The PlayStation face buttons in the game's prompts (assets/button_glyphs/playstation, embedded): replacements of
+// the game's 40x40 glyph textures, by their hashes, while the Button style setting is PlayStation. A mod's or language
+// pack's file for the same hash wins.
+constexpr const char* kEmbeddedPrefix = "embedded:";
+constexpr const char* kPlayStationGlyphs[] = {
+    "567C603ACEC3BEF6",   // X: square
+    "5815009FFD003F54",   // B: circle
+    "62B5B1271CAFB882",   // Y: triangle
+    "B30926707688AFA7",   // A: cross
+};
+
+bool PlayStationGlyphs()
+{
+    return settings::Get("AC6_BUTTON_STYLE") == "playstation";
+}
+
 // The chosen language pack's textures first, then mods/<mod>/textures/**.dds with `includeMods`, the mods in name order
 // (the first one with a hash wins).
 std::unordered_map<uint64_t, std::filesystem::path> ScanMods(bool includeMods)
@@ -99,6 +117,13 @@ std::unordered_map<uint64_t, std::filesystem::path> ScanMods(bool includeMods)
                 index.emplace(hash, it->path());
         }
     }
+    if (PlayStationGlyphs())
+        for (const char* name : kPlayStationGlyphs)
+        {
+            uint64_t hash;
+            if (ParseHash(name, hash))
+                index.emplace(hash, std::filesystem::path(std::string(kEmbeddedPrefix) + "PlayStationGlyph_" + name));
+        }
     return index;
 }
 
@@ -353,13 +378,28 @@ void MakeMips(Image& image, uint32_t levels)
 
 bool ReadDds(const std::filesystem::path& path, Image& out, std::string& error)
 {
-    std::ifstream f(path, std::ios::binary);
-    if (!f)
+    std::vector<uint8_t> data;
+    if (const std::string name = platform::PathUtf8(path); name.starts_with(kEmbeddedPrefix))
     {
-        error = "can't open";
-        return false;
+        size_t size = 0;
+        const unsigned char* bytes = EmbeddedFileData(name.c_str() + std::strlen(kEmbeddedPrefix), &size);
+        if (!bytes)
+        {
+            error = "not embedded";
+            return false;
+        }
+        data.assign(bytes, bytes + size);
     }
-    std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    else
+    {
+        std::ifstream f(path, std::ios::binary);
+        if (!f)
+        {
+            error = "can't open";
+            return false;
+        }
+        data.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
     if (data.size() < 128 || std::memcmp(data.data(), "DDS ", 4) != 0)
     {
         error = "not a DDS file";

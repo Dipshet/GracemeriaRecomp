@@ -7,6 +7,7 @@
 // Replace: mods/<any mod>/textures/<hash>[anything].dds (next to the executable) replaces the texture with that hash, at
 // the file's own size (higher resolutions too) and format (BC1-5, 8-bit RGBA / BGRA, 8-bit luminance, mips taken from
 // the file, or made for 8-bit colour). AC6_TEXTURE_MODS=0 (modding.texture_replacements) turns replacements off (live).
+// Built in: the PlayStation face buttons (assets/button_glyphs) while Button style is PlayStation, beneath the mods.
 // The browser (the settings overlay's Debug tab): the textures the last frame used, drawn by their descriptors.
 // F5 (RequestReload) reads the mods folder and every replacement file again at the next frame, so a modder sees an
 // edited file in the game at once.

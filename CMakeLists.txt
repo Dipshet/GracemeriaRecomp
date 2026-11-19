@@ -248,17 +248,23 @@ elseif (NOT AC6_DXC)
         set(AC6_DXC "${AC6_DXC_FOUND}")
     endif()
 endif()
-# The settings overlay's fonts (thirdparty/fonts, SIL OFL) and the shipped pipeline list (renderer.cpp PipelineList),
-# embedded (tools/cmake/embed_files.cmake).
+# The settings overlay's fonts (thirdparty/fonts, SIL OFL), the shipped pipeline list (renderer.cpp PipelineList) and the
+# PlayStation face button glyphs (assets/button_glyphs, gpu/texture_mods.cpp), embedded (tools/cmake/embed_files.cmake).
 set(AC6_FONTS_GEN "${CMAKE_CURRENT_BINARY_DIR}/generated/fonts.cpp")
 set(AC6_SHIPPED_PIPELINES "${CMAKE_CURRENT_SOURCE_DIR}/GracemeriaRecomp/src/gpu/shipped_pipelines.bin")
 set(AC6_FONTS "ShareTech=ShareTech-Regular.ttf|ShareTechMono=ShareTechMono-Regular.ttf|ShippedPipelines=${AC6_SHIPPED_PIPELINES}")
+set(AC6_PS_GLYPHS "")
+foreach(hash 567C603ACEC3BEF6 5815009FFD003F54 62B5B1271CAFB882 B30926707688AFA7)
+    set(glyph "${CMAKE_CURRENT_SOURCE_DIR}/assets/button_glyphs/playstation/${hash}.dds")
+    string(APPEND AC6_FONTS "|PlayStationGlyph_${hash}=${glyph}")
+    list(APPEND AC6_PS_GLYPHS "${glyph}")
+endforeach()
 add_custom_command(
     OUTPUT "${AC6_FONTS_GEN}"
     COMMAND "${CMAKE_COMMAND}" "-DOUTPUT=${AC6_FONTS_GEN}" "-DFILES=${AC6_FONTS}" "-DDIR=${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fonts" -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/embed_files.cmake
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/embed_files.cmake" "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fonts/ShareTech-Regular.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fonts/ShareTechMono-Regular.ttf" "${AC6_SHIPPED_PIPELINES}"
-    COMMENT "Embedding the overlay's fonts and the shipped pipeline list"
+        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fonts/ShareTechMono-Regular.ttf" "${AC6_SHIPPED_PIPELINES}" ${AC6_PS_GLYPHS}
+    COMMENT "Embedding the overlay's fonts, the shipped pipeline list and the button glyphs"
     VERBATIM)
 # The renderer's own shaders, compiled at build time.
 set(AC6_INTERNAL_SHADERS_GEN "${CMAKE_CURRENT_BINARY_DIR}/generated/internal_shaders.cpp")

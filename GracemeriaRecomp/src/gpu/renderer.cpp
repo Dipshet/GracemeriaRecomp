@@ -2671,8 +2671,9 @@ uint32_t GetTextureImpl(RenderCommandList& cl, const xenos::TextureFetch& fetch)
         t.watchGeneration = 0;
     }
     t.unchangedChecks = 0;
-    // A mod's replacement for this content (gpu/texture_mods.h): its image instead of the upload.
-    if (!cube && mods::ReplaceOn())
+    // A mod's replacement for this content (gpu/texture_mods.h): its image instead of the upload. (The index has the
+    // mods only with replacements on, the language pack's and the button glyphs either way.)
+    if (!cube)
         if (const auto path = mods::FindReplacement(hash))
             if (const uint32_t descriptor = ReplaceTexture(cl, t, fetch, hostFormat, *path, hash, mips.size() > 0))
             {
