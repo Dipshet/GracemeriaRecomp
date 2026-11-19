@@ -31,6 +31,7 @@ constexpr uint32_t kUsers = 4;
 std::mutex s_mutex;
 PadState s_published[kUsers];
 SDL_Gamepad* s_pads[kUsers] = {};
+uint32_t s_active = 0;   // the slot of the controller that is player 1 (ActivePad)
 struct Rumble { bool pending = false; uint16_t left = 0, right = 0; } s_rumble[kUsers];
 
 uint32_t s_frame = 0;
@@ -483,26 +484,75 @@ void HandleEvent(const SDL_Event& event)
             }
             SDL_free(ids);
         }
-        if (moved && s_pads[0])
-            log::Info("Gamepads: player 1 is now {}", SDL_GetGamepadName(s_pads[0]) ? SDL_GetGamepadName(s_pads[0]) : "?");
+        // (The slots moved: player 1 is the first one's controller again until another is pressed.)
+        if (s_active != 0 || moved)
+        {
+            s_active = 0;
+            if (s_pads[0])
+                log::Info("Gamepads: player 1 is now {}", SDL_GetGamepadName(s_pads[0]) ? SDL_GetGamepadName(s_pads[0]) : "?");
+        }
     }
+}
+
+// One player: AC6 has no local multiplayer, and only player 1 has a gamer profile. Each connected controller has a slot,
+// but only the active one is the game's player 1, and players 2-4 are never connected. As players 2-4 a second
+// controller (a pad and a virtual copy of it from Steam Input or DS4Windows, a HOTAS or wheel driver, a joystick SDL
+// takes as a gamepad) could be the one "Press Start" picked: the game's player then had no profile and "Select a gamer
+// profile" looped. The controller last used is the active one: another takes over when it is pressed (a button, a
+// trigger or a stick past half) while the active one is idle, so a mirrored copy never flips back and forth. Everything
+// that follows player 1's controller (Advanced controls' pad bindings, the DualSense triggers, the prompts' style,
+// rumble) follows the active one.
+
+SDL_Gamepad* ActivePad()
+{
+    return s_pads[s_active];
+}
+
+bool Touched(const PadState& s)
+{
+    constexpr int kHalf = 16384;
+    return s.buttons || s.leftTrigger > 64 || s.rightTrigger > 64 || std::abs(int(s.thumbLX)) > kHalf ||
+        std::abs(int(s.thumbLY)) > kHalf || std::abs(int(s.thumbRX)) > kHalf || std::abs(int(s.thumbRY)) > kHalf;
 }
 
 void Update()
 {
     PadState next[kUsers];
     const uint64_t nowMs = SDL_GetTicks();
+    PadState slots[kUsers];
     for (uint32_t u = 0; u < kUsers; u++)
         if (s_pads[u])
         {
-            ReadGamepad(s_pads[u], next[u]);
-            FilterStickChord(s_chord[u], next[u], nowMs);
+            ReadGamepad(s_pads[u], slots[u]);
+            FilterStickChord(s_chord[u], slots[u], nowMs);
         }
+    // AC6_CONTROL_USER=<1-3> (tests): the control channel's presses as the controller in that slot (another controller
+    // than the active one).
+    static const uint32_t controlUser = [] { const char* v = std::getenv("AC6_CONTROL_USER"); return v ? std::min<uint32_t>(uint32_t(std::atoi(v)), kUsers - 1) : 0u; }();
+    Control* control = s_held ? nullptr : ControlChannel();
+    if (control && controlUser)
+        RunControl(*control, s_frame, slots[controlUser]);
+    // The active controller: the one last pressed (see s_active).
+    if (!Touched(slots[s_active]))
+        for (uint32_t u = 0; u < kUsers; u++)
+            if (u != s_active && (s_pads[u] || u == controlUser) && Touched(slots[u]))
+            {
+                if (SDL_Gamepad* old = ActivePad())
+                {
+                    dualsense::Clear();
+                    SDL_RumbleGamepad(old, 0, 0, 0);
+                }
+                s_active = u;
+                SDL_Gamepad* pad = ActivePad();
+                log::Info("Gamepads: player 1 is now {}", pad ? (SDL_GetGamepadName(pad) ? SDL_GetGamepadName(pad) : "?") : "the test controller");
+                break;
+            }
+    next[0] = slots[s_active];
     // Player 1 is always connected: the keyboard (and the macro) drive it even without a controller.
     next[0].connected = true;
     // Advanced controls: in flight, the controller's bound inputs out, then the bindings' in.
     const bool flying = kbm::InFlight();
-    advanced::Mask(s_pads[0], next[0], flying, s_held);
+    advanced::Mask(ActivePad(), next[0], flying, s_held);
     // The keyboard and mouse (input/kbm.cpp, AC6_KBM=1), or the fixed keyboard map. Apply also hides the idle cursor.
     if (s_held)
     {
@@ -562,9 +612,9 @@ void Update()
             }
         }
     }
-    if (Control* control = ControlChannel(); control && !s_held)
+    if (control && !controlUser)
         RunControl(*control, s_frame, next[0]);
-    advanced::Add(s_pads[0], next[0], flying, s_held);
+    advanced::Add(ActivePad(), next[0], flying, s_held);
     for (uint32_t u = 0; u < kUsers; u++)
     {
         PadState& pad = next[u];
@@ -617,17 +667,16 @@ void Update()
         }
     }
     // DualSense adaptive triggers: player 1's pad.
-    dualsense::Update(s_pads[0], s_held);
-    s_padType = s_pads[0] ? SDL_GetGamepadType(s_pads[0]) : SDL_GAMEPAD_TYPE_UNKNOWN;
+    dualsense::Update(ActivePad(), s_held);
+    s_padType = ActivePad() ? SDL_GetGamepadType(ActivePad()) : SDL_GAMEPAD_TYPE_UNKNOWN;
     // Xbox vibration lasts until changed. SDL rumble has a duration, so it is sent for 2 s and refreshed every 0.5 s of
     // real time while it's on (counted in frames instead, a hitch or a frame rate under 30 would let it lapse).
     static uint64_t rumbleSent[kUsers] = {};
-    for (uint32_t u = 0; u < kUsers; u++)
-        if (s_pads[u] && (rumble[u].pending || ((rumble[u].left || rumble[u].right) && nowMs - rumbleSent[u] >= 500)))
-        {
-            SDL_RumbleGamepad(s_pads[u], rumble[u].left, rumble[u].right, 2000);
-            rumbleSent[u] = nowMs;
-        }
+    if (SDL_Gamepad* pad = ActivePad(); pad && (rumble[0].pending || ((rumble[0].left || rumble[0].right) && nowMs - rumbleSent[0] >= 500)))
+    {
+        SDL_RumbleGamepad(pad, rumble[0].left, rumble[0].right, 2000);
+        rumbleSent[0] = nowMs;
+    }
 }
 
 void SetHeld(bool held)
