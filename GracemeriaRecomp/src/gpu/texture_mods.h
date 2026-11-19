@@ -8,6 +8,8 @@
 // the file's own size (higher resolutions too) and format (BC1-5, 8-bit RGBA / BGRA, 8-bit luminance, mips taken from
 // the file, or made for 8-bit colour). AC6_TEXTURE_MODS=0 (modding.texture_replacements) turns replacements off (live).
 // The browser (the settings overlay's Debug tab): the textures the last frame used, drawn by their descriptors.
+// F5 (RequestReload) reads the mods folder and every replacement file again at the next frame, so a modder sees an
+// edited file in the game at once.
 //
 // The files are the player's: nothing is shipped or downloaded. A mod ships its own art.
 
@@ -41,6 +43,7 @@ bool Dumped(uint64_t hash);                       // a dump of it exists (this r
 std::filesystem::path DumpDirectory();
 std::filesystem::path ModsDirectory();
 size_t ReplacementCount();
+void RequestReload();   // F5: the replacements read again from their files at the next frame
 
 // Renderer side.
 bool DumpOn();

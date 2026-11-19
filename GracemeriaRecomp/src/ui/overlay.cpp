@@ -224,6 +224,7 @@ char s_text[512] = {};
 bool s_gamepad = false;      // the controller was used last: its prompts
 bool s_hintDone = false;     // the start-up hint (DrawStartupHint) shown out, or the overlay opened
 bool s_updateHintDone = false;   // the update notice (DrawUpdateHint) shown out, or the overlay opened
+uint64_t s_reloadNoteAt = 0;     // SDL_GetTicks() of the last F5 (the texture reload's note, DrawReloadNote)
 std::string s_status;
 bool s_statusWarn = false;
 // The confirmation up, if any: Quit to desktop's, Restart now's.
@@ -3915,6 +3916,37 @@ void DrawUpdateHint(ImDrawList* dl, ImVec2 pos, ImVec2 size, float alpha)
     Text(dl, s_body, textSize, ImVec2(a.x + pad, a.y + pad), Rgb(0xE4E9FA, alpha), text, 0.06f);
 }
 
+// F5's note (the texture replacements read again): 2 s, fading over the last half, where the start-up hint is.
+float ReloadNoteAlpha()
+{
+    if (!s_reloadNoteAt)
+        return 0.0f;
+    const double t = (SDL_GetTicks() - s_reloadNoteAt) / 1000.0;
+    if (t >= 2.0)
+    {
+        s_reloadNoteAt = 0;
+        return 0.0f;
+    }
+    return float(std::min(1.0, (2.0 - t) * 2.0));
+}
+
+std::string ReloadNoteText()
+{
+    if (!gpu::mods::ReplaceOn())
+        return "TEXTURE REPLACEMENTS ARE OFF (THE DEBUG TAB)";
+    return std::format("TEXTURE REPLACEMENTS RELOADED: {}", gpu::mods::ReplacementCount());
+}
+
+void DrawReloadNote(ImDrawList* dl, ImVec2 pos, ImVec2 size, float alpha)
+{
+    const float scale = std::min(size.x / 1920.0f, size.y / 1080.0f), textSize = 24.0f * scale, pad = 10.0f * scale;
+    const std::string text = ReloadNoteText();
+    const float w = TextWidth(s_body, textSize, text, 0.06f), h = textSize + 2.0f * pad;
+    const ImVec2 a(pos.x + (size.x - w) * 0.5f - pad, pos.y + size.y - 24.0f * scale - h), b(a.x + w + 2.0f * pad, a.y + h);
+    dl->AddRectFilled(a, b, Rgb(0x04051A, 0.7f * alpha));
+    Text(dl, s_body, textSize, ImVec2(a.x + pad, a.y + pad), Rgb(0xE4E9FA, alpha), text, 0.06f);
+}
+
 void DrawFpsCounter(ImDrawList* dl, ImVec2 pos, ImVec2 size)
 {
     using Clock = std::chrono::steady_clock;
@@ -3992,6 +4024,17 @@ bool HandleEvent(const SDL_Event& event)
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.scancode == SDL_SCANCODE_F4 && !event.key.repeat)
     {
         SetOpen(!s_open.load());
+        return true;
+    }
+    // F5: the texture replacements read again from their files. Open or closed: a note over the game, 
+    // or the overlay's status line.
+    if (event.type == SDL_EVENT_KEY_DOWN && event.key.scancode == SDL_SCANCODE_F5 && !event.key.repeat)
+    {
+        gpu::mods::RequestReload();
+        if (s_open.load())
+            Status(gpu::mods::ReplaceOn() ? "Texture replacements reloaded from their files." : "Texture replacements are off (Debug tab).");
+        else
+            s_reloadNoteAt = std::max<uint64_t>(SDL_GetTicks(), 1);
         return true;
     }
     // Both stick clicks together on a controller, LS + RS (L3 + R3): input::Update keeps them from the game (a click alone
@@ -4095,8 +4138,8 @@ void Frame()
     {
         // (The FPS counter and the start-up hint alone, without the backend's new frame: it would read the gamepads for
         // the overlay's keys and show the mouse cursor during play.)
-        const float hint = HintAlpha(), updateHint = UpdateHintAlpha();
-        if (FpsCounterOn() || hint > 0.0f || updateHint > 0.0f)
+        const float hint = HintAlpha(), updateHint = UpdateHintAlpha(), reloadNote = ReloadNoteAlpha();
+        if (FpsCounterOn() || hint > 0.0f || updateHint > 0.0f || reloadNote > 0.0f)
             if (SDL_Window* window = Window())
             {
                 int w = 0, h = 0, pw = 0, ph = 0;
@@ -4112,7 +4155,9 @@ void Frame()
                     const ImGuiViewport* vp = ImGui::GetMainViewport();
                     if (FpsCounterOn())
                         DrawFpsCounter(ImGui::GetForegroundDrawList(), vp->Pos, vp->Size);
-                    if (hint > 0.0f)
+                    if (reloadNote > 0.0f)
+                        DrawReloadNote(ImGui::GetForegroundDrawList(), vp->Pos, vp->Size, reloadNote);
+                    else if (hint > 0.0f)
                         DrawStartupHint(ImGui::GetForegroundDrawList(), vp->Pos, vp->Size, hint);
                     else if (updateHint > 0.0f)
                         DrawUpdateHint(ImGui::GetForegroundDrawList(), vp->Pos, vp->Size, updateHint);

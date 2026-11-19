@@ -35,6 +35,7 @@ bool s_indexRead = false;
 
 std::atomic<uint64_t> s_generation{ UINT64_MAX };
 std::atomic<bool> s_dumpOn{ false }, s_replaceOn{ true };
+std::atomic<bool> s_reload{ false };   // F5: everything read again
 
 void ReadSettings()
 {
@@ -226,7 +227,8 @@ bool RefreshIndex()
     static uint64_t seen = UINT64_MAX;
     static bool replacing = true;
     const uint64_t now = settings::Generation();
-    if (seen == now && s_indexRead)
+    const bool reload = s_reload.exchange(false);
+    if (!reload && seen == now && s_indexRead)
         return false;
     seen = now;
     const bool on = ReplaceOn();
@@ -245,11 +247,18 @@ bool RefreshIndex()
                     break;
                 }
         s_index = std::move(index);
-        if (!s_indexRead || changed)
-            log::Info("Texture mods: {} replacement(s) in {}{}", s_index.size(), platform::PathUtf8(ModsDirectory()), on ? "" : " (off: AC6_TEXTURE_MODS=0)");
+        if (!s_indexRead || changed || reload)
+            log::Info("Texture mods: {} replacement(s) in {}{}{}", s_index.size(), platform::PathUtf8(ModsDirectory()),
+                on ? "" : " (off: AC6_TEXTURE_MODS=0)", reload ? " (F5: all read again)" : "");
         s_indexRead = true;
     }
-    return changed;
+    // (A reload has the renderer check every texture again, and a replaced one reads its file again.)
+    return changed || reload;
+}
+
+void RequestReload()
+{
+    s_reload.store(true);
 }
 
 std::optional<std::filesystem::path> FindReplacement(uint64_t hash)

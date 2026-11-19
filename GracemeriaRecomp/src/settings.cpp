@@ -404,6 +404,7 @@ const Setting kSettings[] = {
       "Default: Off" },
     { "modding", "texture_replacements", "AC6_TEXTURE_MODS", kBool, "false",
       "Replaces textures with mods/<mod>/textures/<hash>.dds next to the game, at any resolution\n"
+      "F5 reads the files again, so an edited texture shows at once\n"
       "Default: On" },
     { "modding", "package_mods", "AC6_PACKAGE_MODS", kBool, "false",
       "Loads the mods' game data from mods/<mod>/packages/ when the game starts\n"

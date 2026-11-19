@@ -114,6 +114,7 @@ The **mouse** steers the aircraft. Hold `Left Alt` to look around with the mouse
 | Key | Action |
 |-|-|
 | F4 | Settings overlay (also **LS + RS** on a controller) |
+| F5 | Reload the texture replacements from their files |
 | F11 | (Debug) Save the last few seconds as pictures |
 | F12 | (Debug) Save a replayable capture of the last few seconds |
 
