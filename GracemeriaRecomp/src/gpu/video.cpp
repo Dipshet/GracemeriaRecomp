@@ -203,6 +203,18 @@ bool Video::Init()
         return false;
     }
     input::Init();
+    // The Debug tab's GPU debug mode (AC6_GPU_DEBUG=1; diagnosis, slow): a breadcrumb per draw with its description and
+    // the vertex streams' range checks (AC6_GPU_BREADCRUMBS=sync, gpu/breadcrumbs.h), and each frame finished on the GPU
+    // before the next is made (AC6_SERIAL_FRAMES=1). Either variable set by hand is kept.
+    if (const char* v = std::getenv("AC6_GPU_DEBUG"); v && *v == '1')
+    {
+        if (!std::getenv("AC6_GPU_BREADCRUMBS"))
+            platform::SetEnvironment("AC6_GPU_BREADCRUMBS", "sync");
+        if (!std::getenv("AC6_SERIAL_FRAMES"))
+            platform::SetEnvironment("AC6_SERIAL_FRAMES", "1");
+        log::Info("GPU debug mode: on (AC6_GPU_BREADCRUMBS={}, AC6_SERIAL_FRAMES={}: slow)", std::getenv("AC6_GPU_BREADCRUMBS"),
+            std::getenv("AC6_SERIAL_FRAMES"));
+    }
     if (const char* v = std::getenv("AC6_BACKGROUND"); v && *v == '1')
         background = true;
     if (const char* v = std::getenv("AC6_FRAME_PACING"); v && *v)
@@ -896,6 +908,11 @@ void Video::Present(uint32_t vblanks, bool waitAll, bool pumpEvents)
             PumpEvents();
         return;
     }
+    // AC6_SERIAL_FRAMES=1 (diagnosis): each frame is finished on the GPU before the next one is made, nothing of two
+    // frames in flight at once (a test for faults that come from frames overlapping).
+    static const bool serialFrames = [] { const char* v = std::getenv("AC6_SERIAL_FRAMES"); return v && *v == '1'; }();
+    if (serialFrames)
+        waitAll = true;
     plume::RenderCommandList& cl = Commands();
     if (GpuTiming() && gpuTimers[slot])
     {

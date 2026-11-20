@@ -816,6 +816,25 @@ uint64_t SeedFrame()
     return s_r.frame + s_frameSeedBase.load(std::memory_order_relaxed);
 }
 
+// AC6_GPU_FAULT_TEST=<frame>: a test of the device-lost report (gpu/breadcrumbs.h). From that frame the GPU reads through
+// an unmapped address (0x1000), so it faults and the device is lost: in a draw of its own at the end of each frame
+// (whatever the output path), and where it reads guest vertices at computed indices.
+bool FaultTestDue()
+{
+    static const uint64_t faultFrame = [] { const char* v = std::getenv("AC6_GPU_FAULT_TEST"); return v && *v ? std::strtoull(v, nullptr, 10) : UINT64_MAX; }();
+    if (s_r.frame < faultFrame)
+        return false;
+    static bool logged = false;
+    if (!std::exchange(logged, true))
+        log::Warn("AC6_GPU_FAULT_TEST: the GPU reads an unmapped address from frame {} (a test crash)", s_r.frame);
+    return true;
+}
+
+uint64_t FaultTestAddress(uint64_t address)
+{
+    return FaultTestDue() ? 0x1000 : address;
+}
+
 // AC6_GPU_PASSES: an image in a pass label, "3840x2160 f24 x2" (size, RenderFormat, samples).
 std::string PassImage(const HostImage* image)
 {
@@ -7947,6 +7966,54 @@ bool BeginUiImage(RenderCommandList& cl, HostImage& frame)
     return true;
 }
 
+// AC6_GPU_BREADCRUMBS=sync: whether `bytes` from GPU address `address` lie in memory a computed-index fetch may read this
+// frame: the upload ring's part for this frame, or a kept stream's buffer for this frame's slot.
+bool StreamRangeLive(uint64_t address, uint64_t bytes)
+{
+    const UploadRing& u = s_r.upload;
+    const uint64_t ringStart = u.deviceAddress + u.base;
+    if (address >= ringStart && address + bytes <= ringStart + u.size)
+        return true;
+    const uint32_t slot = g_video.slot;
+    for (const auto& [end, p] : s_r.persistentStreams)
+        if (p.buffers[slot] && address >= p.address[slot] && address + bytes <= p.address[slot] + (p.end - p.start))
+            return true;
+    return false;
+}
+
+// AC6_GPU_BREADCRUMBS=sync: a draw's description for its breadcrumb, and an error at once for a computed-index stream outside
+// the memory it may read (a GPU fault waiting to happen: robust buffer access doesn't cover raw addresses).
+std::string DescribeDrawForBreadcrumb(const SharedConstants& sc, const HostShader& vs, const HostShader* ps, const Targets& targets,
+    uint32_t primType, uint32_t firstVertex, uint32_t vertexCount, uint32_t indexCount)
+{
+    std::string d = std::format("primitive {}, first vertex {}, {} vertices, {} indices", primType, firstVertex, vertexCount, indexCount);
+    if (targets.color)
+        d += std::format(", colour {}x{} f{} x{}", targets.color->width, targets.color->height, int(targets.color->format), targets.color->samples);
+    if (targets.depth)
+        d += std::format(", depth {}x{} f{} x{}", targets.depth->width, targets.depth->height, int(targets.depth->format), targets.depth->samples);
+    for (uint32_t s = 0; s < 16; s++)
+    {
+        if (!(vs.indexedFetchStreams & (1u << s)))
+            continue;
+        const uint64_t address = sc.streamAddress[s];
+        const uint32_t dwords = sc.streamDwords[s];
+        const bool live = StreamRangeLive(address, uint64_t(dwords) * 4);
+        d += std::format(", stream {} at {:X} ({} dwords){}", s, address, dwords, live ? "" : " OUTSIDE LIVE MEMORY");
+        if (!live)
+        {
+            static uint32_t reported = 0;
+            if (reported++ < 32)
+                log::Error("GPU breadcrumbs: vs {:016X} stream {} reads {:X}-{:X} ({} dwords), outside this frame's memory (frame {})",
+                    vs.hash, s, address, address + uint64_t(dwords) * 4, dwords, s_r.frame);
+        }
+    }
+    if (ps)
+        for (uint32_t s = 0; s < kFetchSlots; s++)
+            if (ps->textureSlots & (1u << s))
+                d += std::format(", t{}={}", s, sc.texture2DIndices[s]);
+    return d;
+}
+
 void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t vertexCount, IndexList& indices, HostShader* vs, HostShader* ps,
     uint32_t indexBias = 0)
 {
@@ -8557,6 +8624,7 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
         }
         sc.streamAddress[s] = it->second.second + (start - it->second.first);
         sc.streamDwords[s] = dwords;
+        sc.streamAddress[s] = FaultTestAddress(sc.streamAddress[s]);
         static const uint64_t traceFrame = [] { const char* v = std::getenv("AC6_DRAW_TRACE"); return v ? std::stoull(v) : UINT64_MAX; }();
         if (s_r.frame == traceFrame)
         {
@@ -8776,7 +8844,9 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
         s_r.preUiFrame = s_r.frame;
     }
     g_video.CountGpuPassDraw();
-    breadcrumbs::NoteDraw(vs->hash, ps ? ps->hash : 0);
+    breadcrumbs::NoteDraw(cl, s_r.frame, vs->hash, ps ? ps->hash : 0);
+    if (breadcrumbs::Detailed())
+        breadcrumbs::Detail(DescribeDrawForBreadcrumb(sc, *vs, ps, targets, primType, firstVertex, vertexCount, uint32_t(indices.size())));
     // AC6_SKIP_VS=<hex prefix>[,<prefix>...]@<first>-<last>[;...]: skip draws whose vertex shader hash
     // starts with a prefix during those frames (bisecting which draws produce something on screen).
     // <prefix>#<n0>-<n1> skips only the n0-th to n1-th matching draws of each frame (counted from 0).
@@ -10393,6 +10463,11 @@ void RunAmbientOcclusion(RenderCommandList& cl, HostImage& image)
         BindCommon(cl);
         for (const AoTerrainDraw& note : s_aoTerrainDraws)
         {
+            if (breadcrumbs::Detailed())
+            {
+                breadcrumbs::NoteDraw(cl, s_r.frame, 0, 0);
+                breadcrumbs::Detail(std::format("ambient occlusion: a terrain draw again, {} indices", note.indexCount));
+            }
             SetViewport(cl, note.viewport);
             SetScissor(cl, RenderRect(0, 0, int32_t(note.width), int32_t(note.height)));
             SetPipeline(cl, note.pipeline);
@@ -10725,6 +10800,11 @@ void RunEmitterLight(RenderCommandList& cl, HostImage& image)
     BindCommon(cl);
     for (const AoTerrainDraw& note : s_lightDraws)
     {
+        if (breadcrumbs::Detailed())
+        {
+            breadcrumbs::NoteDraw(cl, s_r.frame, 0, 0);
+            breadcrumbs::Detail(std::format("emitter light: a draw again, {} indices", note.indexCount));
+        }
         SetViewport(cl, note.viewport);
         SetScissor(cl, RenderRect(0, 0, int32_t(note.width), int32_t(note.height)));
         SetPipeline(cl, note.pipeline);
@@ -11326,6 +11406,12 @@ void RunPlanarReflection(RenderCommandList& cl, HostImage& image, const HostImag
         const AoTerrainDraw& d = note.draw;
         if (!d.pipeline || (layersOnly && note.depthWrite))
             continue;
+        if (breadcrumbs::Detailed())
+        {
+            breadcrumbs::NoteDraw(cl, s_r.frame, 0, 0);
+            breadcrumbs::Detail(std::format("planar reflection: a scene draw again, {} indices, {} vertex streams, depth write {}",
+                d.indexCount, d.viewCount, note.depthWrite));
+        }
         const float sx = float(w) / float(d.width), sy = float(h) / float(d.height);
         SetViewport(cl, RenderViewport(note.viewport.x * sx, note.viewport.y * sy, note.viewport.width * sx, note.viewport.height * sy,
             note.viewport.minDepth, note.viewport.maxDepth));
@@ -12959,6 +13045,23 @@ void PresentImpl(uint32_t vblanks)
         }
         if (source)
             source = &Readable(cl, *source);
+        // AC6_GPU_FAULT_TEST: the gamma ramp table's pass into its image, reading the table at an unmapped address.
+        if (FaultTestDue() && s_r.gammaLutPipeline)
+        {
+            MarkPass([] { return std::string("AC6_GPU_FAULT_TEST: a read of an unmapped address"); });
+            EnsureImage(s_r.rampImage, 1026, 1, RenderFormat::R16G16B16A16_FLOAT, false, 1, false, true);
+            Transition(cl, s_r.rampImage, RenderTextureLayout::COLOR_WRITE);
+            cl.setFramebuffer(GetFramebuffer(&s_r.rampImage, nullptr));
+            SetViewport(cl, RenderViewport(0.0f, 0.0f, 1026.0f, 1.0f));
+            SetScissor(cl, RenderRect(0, 0, 1026, 1));
+            SetPipeline(cl, s_r.gammaLutPipeline.get());
+            BindCommon(cl);
+            const uint32_t push[4] = { 0, 0, 0x1000, 0 };
+            cl.setGraphicsPushConstants(0, push, 0, sizeof(push));
+            cl.drawInstanced(3, 1, 0, 0);
+            cl.setFramebuffer(nullptr);
+            Transition(cl, s_r.rampImage, RenderTextureLayout::SHADER_READ);
+        }
         // Frosted glass at the sides of a 16:9 picture, where the frame is the whole picture.
         if (source && !dumping && !presentOverride && sourceScaleX == 1.0f && sourceScaleY == 1.0f &&
             source->width == s_r.targetWidth && source->height == s_r.targetHeight)

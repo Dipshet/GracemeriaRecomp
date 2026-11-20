@@ -19,8 +19,9 @@ namespace ac6::gpu::breadcrumbs {
 namespace {
 
 // A ring: breadcrumb n is slot n % kSlots, in the GPU buffer (reached: the first kSlots words, finished: the next
-// kSlots) and in the CPU's records. 4096 is a few frames of passes, more than the frames in flight.
-constexpr uint32_t kSlots = 4096;
+// kSlots) and in the CPU's records: hundreds of frames of passes, and with a breadcrumb per draw (=sync) several frames,
+// more than the frames in flight.
+constexpr uint32_t kSlots = 32768;
 
 struct Record
 {
@@ -32,11 +33,14 @@ struct Record
     uint32_t line = 0;
     uint32_t width = 0, height = 0;
     uint64_t vs = 0, ps = 0;   // the last draw's guest shaders
+    char detail[320] = {};     // =sync: the draw's description (Detail; characters, not a string: the watch reads it
+                               // while the renderer may write it)
 };
 
 std::unique_ptr<plume::RenderBuffer> s_buffer;
 const volatile uint32_t* s_gpu = nullptr;
 bool s_markers = false;
+bool s_perDraw = false;   // AC6_GPU_BREADCRUMBS=sync
 Record s_records[kSlots];
 std::atomic<uint32_t> s_number{ 0 };
 Record* s_current = nullptr;
@@ -103,10 +107,12 @@ void List(uint32_t from, uint32_t to, uint32_t reached, uint32_t finished)
             continue;
         const char* mark = n == reached ? "  <- the GPU's last" : n == finished && s_markers ? "  <- finished up to here" : "";
         log::Error("  {}{}{}", n > reached ? "(not reached) " : "", Describe(r), mark);
+        if (r.detail[0])
+            log::Error("      {}", std::string_view(r.detail, strnlen(r.detail, sizeof(r.detail))));
     }
 }
 
-// The watch (markers only). A stall: submitted breadcrumbs whose work before them hasn't finished, and the GPU's
+// The watch (markers, or =sync, whose breadcrumbs are all written once the work before them has finished). A stall: submitted breadcrumbs whose work before them hasn't finished, and the GPU's
 // finished one not moving. An idle GPU has finished what was submitted (whatever its front end read ahead: in a hang it
 // may stop before the next breadcrumb, so reached can equal finished); work recorded but not yet submitted isn't counted.
 void Watch(double seconds)
@@ -138,8 +144,12 @@ void Watch(double seconds)
         reported = true;
         log::Error("=== GPU STALL: the GPU has not finished the work after breadcrumb #{} for {:.3f} s ===", finished,
             std::chrono::duration<double>(now - since).count());
-        log::Error("GPU breadcrumbs: {} made, {} submitted; the GPU reached #{}; the work it is stuck on comes after #{}:",
-            s_number.load(std::memory_order_relaxed), submitted, reached, finished);
+        if (s_perDraw)
+            log::Error("GPU breadcrumbs: {} made, {} submitted; all the work before #{} finished: the GPU is stuck in its draw "
+                "(per draw):", s_number.load(std::memory_order_relaxed), submitted, finished);
+        else
+            log::Error("GPU breadcrumbs: {} made, {} submitted; the GPU reached #{}; the work it is stuck on comes after #{}:",
+                s_number.load(std::memory_order_relaxed), submitted, reached, finished);
         List(finished, reached, reached, finished);
         log::FlushToDisk();
     }
@@ -166,10 +176,12 @@ void Init(plume::RenderDevice& device)
     std::memset(memory, 0, uint64_t(kSlots) * 2 * 4);
     s_gpu = static_cast<const volatile uint32_t*>(memory);
     s_markers = plume::VulkanBufferMarkers(&device);
-    log::Info("GPU breadcrumbs: on ({})", s_markers ? "buffer markers" : "transfer fills");
+    s_perDraw = v && std::string_view(v) == "sync";
+    log::Info("GPU breadcrumbs: on ({})", s_perDraw ? "a breadcrumb per draw, each written once the work before it is done "
+        "(AC6_GPU_BREADCRUMBS=sync: slow)" : s_markers ? "buffer markers" : "transfer fills");
     const char* w = std::getenv("AC6_GPU_WATCH_MS");
     const double seconds = (w && *w ? std::atof(w) : 1000.0) / 1000.0;
-    if (s_markers && seconds > 0)
+    if ((s_markers || s_perDraw) && seconds > 0)
     {
         std::thread(Watch, seconds).detach();
         log::Info("GPU watch: on (the GPU stuck for {:.1f} s is logged)", seconds);
@@ -183,18 +195,44 @@ void Mark(plume::RenderCommandList& cl, uint64_t frame, uint32_t width, uint32_t
     const uint32_t number = s_number.fetch_add(1, std::memory_order_relaxed) + 1;
     const uint32_t slot = number % kSlots;
     Record& r = s_records[slot];
-    r = Record{ number, 0, frame, where.file_name(), where.function_name(), where.line(), width, height, 0, 0 };
+    r.number = number;
+    r.draws = 0;
+    r.frame = frame;
+    r.file = where.file_name();
+    r.function = where.function_name();
+    r.line = where.line();
+    r.width = width;
+    r.height = height;
+    r.vs = r.ps = 0;
+    r.detail[0] = 0;
     s_current = &r;
     cl.writeBreadcrumb(s_buffer.get(), uint64_t(slot) * 4, uint64_t(kSlots + slot) * 4, number);
 }
 
-void NoteDraw(uint64_t vs, uint64_t ps)
+void NoteDraw(plume::RenderCommandList& cl, uint64_t frame, uint64_t vs, uint64_t ps, std::source_location where)
 {
+    if (s_perDraw && s_buffer)
+        Mark(cl, frame, 0, 0, where);
     if (Record* r = s_current)
     {
         r->draws++;
         r->vs = vs;
         r->ps = ps;
+    }
+}
+
+bool Detailed()
+{
+    return s_perDraw && s_buffer;
+}
+
+void Detail(std::string_view text)
+{
+    if (Record* r = s_current; r && s_perDraw)
+    {
+        const size_t n = std::min(text.size(), sizeof(r->detail) - 1);
+        std::memcpy(r->detail, text.data(), n);
+        r->detail[n] = 0;
     }
 }
 
@@ -216,7 +254,10 @@ void Report(plume::RenderDevice* device)
         return;
     const auto [reached, finished] = Progress();
     const uint32_t made = s_number.load(std::memory_order_relaxed);
-    if (s_markers)
+    if (s_perDraw)
+        log::Error("GPU breadcrumbs: {} made; all the work before #{} finished, and the GPU failed in what came after it "
+            "(per draw: AC6_GPU_BREADCRUMBS=sync)", made, reached);
+    else if (s_markers)
         log::Error("GPU breadcrumbs: {} made; the GPU reached #{} and finished the work before #{}", made, reached, finished);
     else
         log::Error("GPU breadcrumbs: {} made; the last the GPU wrote is #{} (written where its render pass ended)", made, reached);

@@ -4111,6 +4111,20 @@ namespace plume {
 
     void VulkanCommandList::writeBreadcrumb(const RenderBuffer *buffer, uint64_t reachedOffset, uint64_t doneOffset, uint32_t value) {
         const VkBuffer target = static_cast<const VulkanBuffer *>(buffer)->vk;
+        if (queue->device->breadcrumbsSynchronous) {
+            // AC6_GPU_BREADCRUMBS=sync (diagnosis, slow): out of the render pass, and written once all the work before
+            // it has finished, so the last one written is exactly how far the GPU got, on any driver.
+            endActiveRenderPass();
+            flushBarriers();
+            VkMemoryBarrier barrier = {};
+            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(vk, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+            vkCmdFillBuffer(vk, target, reachedOffset, 4, value);
+            vkCmdFillBuffer(vk, target, doneOffset, 4, value);
+            return;
+        }
         if (queue->device->bufferMarkerSupported) {
             // Marker writes need no barrier flush: they don't depend on the pending barriers' resources.
             vkCmdWriteBufferMarkerAMD(vk, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, target, reachedOffset, value);
@@ -4763,11 +4777,13 @@ namespace plume {
             faultFeatures.pNext = createDeviceChain;
             createDeviceChain = &faultFeatures;
         }
-        // AC6_GPU_BREADCRUMBS=fill: the breadcrumbs as written without VK_AMD_buffer_marker (Intel's Windows driver).
+        // AC6_GPU_BREADCRUMBS=fill: the breadcrumbs as written without VK_AMD_buffer_marker (Intel's Windows driver);
+        // =sync: each written once the work before it has finished (writeBreadcrumb).
         {
             const char *v = getenv("AC6_GPU_BREADCRUMBS");
+            breadcrumbsSynchronous = v != nullptr && strcmp(v, "sync") == 0;
             bufferMarkerSupported = supportedOptionalExtensions.find(VK_AMD_BUFFER_MARKER_EXTENSION_NAME) != supportedOptionalExtensions.end() &&
-                !(v != nullptr && strcmp(v, "fill") == 0);
+                !(v != nullptr && strcmp(v, "fill") == 0) && !breadcrumbsSynchronous;
         }
 
         nullDescriptorSupported = robustnessFeatures.nullDescriptor;

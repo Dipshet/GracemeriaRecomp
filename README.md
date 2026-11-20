@@ -122,9 +122,14 @@ The **mouse** steers the aircraft. Hold `Left Alt` to look around with the mouse
 
 Before reporting a problem, check the [issues](https://github.com/Dipshet/GracemeriaRecomp/issues) and the [Discord](https://discord.gg/9yjxBkHmZT) server. When reporting an issue, attach `ac6_runtime.log` from the game's folder and how to replicate it.
 
+**Crashes, freezes or wrong drawing with your graphics driver:** the settings overlay's (F4) Debug tab, under Graphics
+driver, has Pipeline libraries and Dynamic rendering to turn off (try them one at a time), and GPU debug mode: much
+slower, but the log then names the draw where the graphics card fails. Reproduce the problem with it on and attach
+`ac6_runtime.log`.
+
 - **Only the North American release** is supported.
-- **Old AMD drivers (before 2022):** in the cockpit view, the canopy can show through the instrument panel. Add
-  `AC6_DYNAMIC_RENDERING = "0"` to the `[env]` section of `ac6_settings.toml`.
+- **Old AMD drivers (before 2022):** in the cockpit view, the canopy can show through the instrument panel. Turn
+  Dynamic rendering off (Debug tab, Graphics driver).
 - **DualSense adaptive triggers on Linux** may need access to the controller's hidraw device (Steam's or
   game-devices-udev's udev rules).
 - **Online play** is not available, yet.

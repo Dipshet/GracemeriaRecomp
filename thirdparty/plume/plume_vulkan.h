@@ -477,6 +477,7 @@ namespace plume {
         bool loadStoreOpNoneSupported = false;
         bool nullDescriptorSupported = false;
         bool bufferMarkerSupported = false;   // AC6: VK_AMD_buffer_marker (writeBreadcrumb)
+        bool breadcrumbsSynchronous = false;  // AC6: AC6_GPU_BREADCRUMBS=sync (writeBreadcrumb)
         bool deviceFaultSupported = false;    // AC6: VK_EXT_device_fault (VulkanDeviceFaultReport)
         // AC6: the Vulkan 1.3 path: dynamic rendering with the rasterizer and depth/stencil state dynamic, depth clamp
         // dynamic too where VK_EXT_extended_dynamic_state3 allows, and pipelines linked from libraries

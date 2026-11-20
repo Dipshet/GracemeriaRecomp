@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <source_location>
+#include <string_view>
 
 namespace plume {
 struct RenderCommandList;
@@ -14,9 +15,11 @@ struct RenderDevice;
 // made after it and their last shaders. With VK_AMD_buffer_marker (NVIDIA, AMD, Mesa) the GPU writes two: one when it
 // reaches the breadcrumb, one when the work before it has finished. Without (Intel's Windows driver) one transfer fill,
 // made where it is outside a render pass and at the end of the render pass otherwise. A few bytes and one GPU write a
-// pass: on in every build. AC6_GPU_BREADCRUMBS=0: off; =fill: the fills even where markers exist (for testing).
+// pass: on in every build. AC6_GPU_BREADCRUMBS=0: off; =fill: the fills even where markers exist (for testing); =sync
+// (diagnosis: slow, the Debug tab's GPU debug mode) a breadcrumb per draw, each written once all the work before it
+// has finished, with a description of the draw: the last one written is the draw the GPU failed or stopped in.
 //
-// With the markers a watch also reads them (10 times a second): when submitted work hasn't finished and the GPU's
+// With the markers or =sync a watch also reads them (10 times a second): when submitted work hasn't finished and the GPU's
 // breadcrumbs haven't moved for a second (AC6_GPU_WATCH_MS, 0: no watch), the GPU is stuck, and the log says where at
 // once, onto the disk. A hang the driver can't recover from can freeze the whole machine before a lost device is ever
 // reported; Windows waits 2 seconds before resetting the GPU.
@@ -27,8 +30,12 @@ void Init(plume::RenderDevice& device);
 // the pass's target, where it has one.
 void Mark(plume::RenderCommandList& cl, uint64_t frame, uint32_t width = 0, uint32_t height = 0,
     std::source_location where = std::source_location::current());
-// A draw after the last breadcrumb, with its guest shaders' hashes.
-void NoteDraw(uint64_t vs, uint64_t ps);
+// A draw after the last breadcrumb, with its guest shaders' hashes (with =sync: a breadcrumb of its own first).
+void NoteDraw(plume::RenderCommandList& cl, uint64_t frame, uint64_t vs, uint64_t ps,
+    std::source_location where = std::source_location::current());
+// =sync: the breadcrumbs keep a description of their draw too (Detail, to be made only when Detailed).
+bool Detailed();
+void Detail(std::string_view text);
 // The breadcrumbs made so far (at a frame's end: that frame's and the ones before), and that they were submitted.
 uint32_t Made();
 void Submitted(uint32_t made);
