@@ -5855,6 +5855,15 @@ bool InitRenderer()
     s_r.samplers[1] = device.createSampler(RenderSamplerDesc());
     s_r.samplerSet->setSampler(0, s_r.samplers[0].get());
     s_r.samplerSet->setSampler(1, s_r.samplers[1].get());
+    // The last slot: point, clamped (SMAA, the enhanced bloom's exposure, the planar glow, the lens effects, the motion
+    // blur). Made here whatever the anti-aliasing: a sampler slot never written is undefined to sample through.
+    {
+        RenderSamplerDesc pointDesc;
+        pointDesc.minFilter = pointDesc.magFilter = RenderFilter::NEAREST;
+        pointDesc.addressU = pointDesc.addressV = pointDesc.addressW = RenderTextureAddressMode::CLAMP;
+        s_r.pointSampler = device.createSampler(pointDesc);
+        s_r.samplerSet->setSampler(kSamplerDescriptors - 1, s_r.pointSampler.get());
+    }
 
     s_r.upload.size = 128ull << 20;
     s_r.upload.buffer = CreateUploadBuffer(s_r.upload.size * Video::kFramesInFlight,
@@ -6127,11 +6136,6 @@ bool InitRenderer()
             s_r.smaaBlendPipeline = device.createGraphicsPipeline(smaaDesc);
             smaaDesc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
             s_r.smaaBlendPipelineFloat = device.createGraphicsPipeline(smaaDesc);
-            RenderSamplerDesc pointDesc;
-            pointDesc.minFilter = pointDesc.magFilter = RenderFilter::NEAREST;
-            pointDesc.addressU = pointDesc.addressV = pointDesc.addressW = RenderTextureAddressMode::CLAMP;
-            s_r.pointSampler = device.createSampler(pointDesc);
-            s_r.samplerSet->setSampler(kSamplerDescriptors - 1, s_r.pointSampler.get());
             log::Info("SMAA {}(high preset)", (LiveAa() & 1) ? "on the scene image " : "ready ");
         }
         else
