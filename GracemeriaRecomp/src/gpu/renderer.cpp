@@ -12133,25 +12133,29 @@ void ResolveImpl(uint32_t device, uint32_t flags, const ResolveRect* srcRect, ui
                     if (SmaaOn())
                         RunSmaa(cl, dst);
                     // Temporal AA or FSR: the surface the scene is drawn in, jittered from the next frame on.
-                    // With FSR upscaling the scene's surfaces are at the render scale from the next frame on. FSR
-                    // makes the target, at the frame's size, from the render-size resolve.
+                    // With FSR upscaling the scene's surfaces are at the render scale from the next frame on, when FSR
+                    // ran on this one: FSR makes the target, at the frame's size, from the render-size resolve. Where
+                    // it can't run (no world camera among the draws: the hangar's aircraft select), the surfaces stay at
+                    // the frame's size. Some screens draw their menus into the surface the scene is resolved from: at
+                    // the render scale with nothing to scale it up, the whole frame showed small in a corner.
                     if (TaaOn() || s_r.fsr)
                     {
                         s_r.taaSurface = surface;
                         s_r.taaSurfaceFrame = s_r.frame;
-                        if (s_r.upscaling)
-                        {
-                            s_r.worldColorSurface = sourceSurface;
-                            s_r.worldDepthSurface = U32(device + kDevDepthStencil);
-                            s_r.worldFrame = s_r.frame;
-                        }
                         // (Without upscaling FSR works on the resolve's own image: with HDR from the scene that is the
                         // target's float twin, not this map's.)
                         HostImage& target = worldResolve ? s_r.resolved[0x05BEB000] : dst;
                         // (Object motion blur: its motion is made before the anti-aliasing, which stores this frame's
                         // camera as the last one, and the blur is applied after it.)
                         HostImage* const blurMotion = MotionBlurStrength() > 0.0f ? MotionForBlur(cl) : nullptr;
-                        if (!(s_r.fsr && RunFsr(cl, target, worldResolve ? &s_r.fsrColor : nullptr)))
+                        const bool fsrRan = s_r.fsr && RunFsr(cl, target, worldResolve ? &s_r.fsrColor : nullptr);
+                        if (s_r.upscaling && fsrRan)
+                        {
+                            s_r.worldColorSurface = sourceSurface;
+                            s_r.worldDepthSurface = U32(device + kDevDepthStencil);
+                            s_r.worldFrame = s_r.frame;
+                        }
+                        if (!fsrRan)
                         {
                             if (worldResolve)
                                 StretchInto(cl, s_r.fsrColor, target, uint32_t(ToHostX(dstW) * s_r.sceneResX / s_r.resX + 0.5),
