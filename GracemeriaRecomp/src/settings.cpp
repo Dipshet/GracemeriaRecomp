@@ -894,10 +894,12 @@ std::string TomlValue(const Entry& entry, const std::string& value)
         return value == "1" || value == "true" ? "true" : "false";
     if (entry.kind == ValueKind::Number)
     {
-        // A number bare, a word a number setting also takes (frame_rate = "console") quoted.
+        // A number bare, a word a number setting also takes (frame_rate = "console") quoted. Empty (a default that is no
+        // number: Match display, the primary monitor, Auto) as an empty string: written as 0 it was the same as a choice
+        // of 0 (frame_rate's Uncapped), which was then taken for the default and not saved.
         char* end = nullptr;
         if (value.empty())
-            return "0";
+            return "\"\"";
         std::strtod(value.c_str(), &end);
         if (end && *end == 0)
             return value;
