@@ -3088,6 +3088,21 @@ void EnsureImage(HostImage& image, uint32_t width, uint32_t height, RenderFormat
     image.layout = RenderTextureLayout::UNKNOWN;
 }
 
+// The R8 image beside a depth resolve that holds its stencil (read as the resolve's 8_8_8_8 texels: the cockpit's
+// depth that the effects pass and the motion blur rebuild from it). Made and scaled as the depth resolve is: with FSR
+// upscaling the scene's resolves are at the render scale, into images of exactly that size. Kept at the frame's size,
+// the render-size stencil went into its top-left corner and was read across the whole image: the cockpit drawn small in
+// the corner of the effects pass's depth, the clouds cut along that shape.
+void EnsureResolvedStencil(HostImage& image, uint32_t width, uint32_t height, bool worldResolve, bool nativeResolve)
+{
+    EnsureImage(image, width, height, RenderFormat::R8_UNORM, false, 1, false, worldResolve);
+    if (s_r.upscaling || nativeResolve)
+    {
+        image.resX = s_r.resX;   // the scale its contents are at (sampled at it)
+        image.resY = s_r.resY;
+    }
+}
+
 // The mip chain of resolve target `image`, (re)made for a width x height texture of
 // `levels` levels in the image's format, level 0 copied from the image when new.
 HostImage& EnsureMipChain(RenderCommandList& cl, HostImage& image, uint32_t width, uint32_t height, uint32_t levels)
@@ -12019,7 +12034,7 @@ void ResolveImpl(uint32_t device, uint32_t flags, const ResolveRect* srcRect, ui
                     if (msDepth || (scale == 1 && src->samples == 1 && src->format == kDepthFormat && src->stencilDescriptor))
                     {
                         oneStencil = &s_r.resolvedStencil[fetch.BaseAddress() & 0x1FFFFFFF];
-                        EnsureImage(*oneStencil, hostW, hostH, RenderFormat::R8_UNORM, false);
+                        EnsureResolvedStencil(*oneStencil, hostW, hostH, worldResolve, nativeResolve);
                         if (oneStencil->width != dst.width || oneStencil->height != dst.height)
                         {
                             oneStencil = nullptr;   // one framebuffer needs them the same size: the passes below
@@ -12080,7 +12095,7 @@ void ResolveImpl(uint32_t device, uint32_t flags, const ResolveRect* srcRect, ui
                         if (scale == 1 && src->format == kDepthFormat)
                         {
                             HostImage& stencilImage = s_r.resolvedStencil[fetch.BaseAddress() & 0x1FFFFFFF];
-                            EnsureImage(stencilImage, hostW, hostH, RenderFormat::R8_UNORM, false);
+                            EnsureResolvedStencil(stencilImage, hostW, hostH, worldResolve, nativeResolve);
                             if (stencilImage.fresh)
                             {
                                 Transition(cl, stencilImage, RenderTextureLayout::COLOR_WRITE);
