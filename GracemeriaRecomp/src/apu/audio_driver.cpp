@@ -38,6 +38,7 @@ uint32_t s_callbackParam = 0;   // guest address of the parameter copy
 std::atomic<uint64_t> s_frames{ 0 };
 SDL_AudioStream* s_stream = nullptr;
 uint32_t s_targetFrames = 4;   // frames kept queued for the device (device-driven pacing)
+int s_outputChannels = 6;      // the device's: 2 when the stream downmixes the 5.1 mix
 uint64_t s_dropped = 0;
 constexpr int kFrameBytes = int(kFrameSamples) * 6 * 4;
 
@@ -109,21 +110,45 @@ void OpenOutput(bool start = true)
         log::Error("SDL audio init failed: {}", SDL_GetError());
         return;
     }
+    // OpenOutput() reads the format of the default playback device with SDL_GetAudioDeviceFormat().
+    // If the device has fewer than 6 channels, the game opens the device with 2 channels instead of 6.
+    // The environment variable AC6_AUDIO_CHANNELS=2 or AC6_AUDIO_CHANNELS=6 overrides this channel count.
+    // The game creates a 6-channel stream with SDL_CreateAudioStream() and binds it with SDL_BindAudioStream().
+    // When the device uses 2 channels, SDL downmixes the 5.1 stream to stereo inside the game.
+    // This downmix prevents silent dialogue on stereo sinks without channel positions.
     const SDL_AudioSpec spec{ SDL_AUDIO_F32, 6, int(kSampleRate) };
-    s_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
-    if (!s_stream)
+    SDL_AudioSpec preferred{};
+    int channels = 6;
+    if (SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &preferred, nullptr) && preferred.channels > 0 && preferred.channels < 6)
+        channels = 2;
+    if (const char* v = std::getenv("AC6_AUDIO_CHANNELS"); v && (*v == '2' || *v == '6'))
+        channels = *v - '0';
+    const SDL_AudioSpec wanted{ SDL_AUDIO_F32, channels, int(kSampleRate) };
+    const SDL_AudioDeviceID device = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &wanted);
+    if (!device)
     {
         log::Error("SDL audio device failed: {}", SDL_GetError());
         return;
     }
+    s_stream = SDL_CreateAudioStream(&spec, &wanted);
+    if (!s_stream || !SDL_BindAudioStream(device, s_stream))
+    {
+        log::Error("SDL audio stream failed: {}", SDL_GetError());
+        if (s_stream)
+            SDL_DestroyAudioStream(s_stream);
+        s_stream = nullptr;
+        SDL_CloseAudioDevice(device);
+        return;
+    }
+    s_outputChannels = channels;
     SDL_ResumeAudioStreamDevice(s_stream);
     // Keep the device's own buffer plus two frames queued.
     SDL_AudioSpec deviceSpec{};
     int deviceFrames = 0;
     if (SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(s_stream), &deviceSpec, &deviceFrames) && deviceFrames > 0)
         s_targetFrames = uint32_t((deviceFrames + kFrameSamples - 1) / kFrameSamples) + 2;
-    log::Info("Audio output: {} (6 channels, {} Hz; device buffer {} samples, {} frames queued)", SDL_GetCurrentAudioDriver(),
-        kSampleRate, deviceFrames, s_targetFrames);
+    log::Info("Audio output: {} ({} channels{}, {} Hz; device buffer {} samples, {} frames queued)", SDL_GetCurrentAudioDriver(),
+        s_outputChannels, s_outputChannels == 2 ? ", downmixed from 5.1" : "", kSampleRate, deviceFrames, s_targetFrames);
 }
 
 // Runs the game's mixer, one frame per call of its callback. With a device, its consumption sets the pace:
