@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -38,9 +39,34 @@ uint32_t s_callbackParam = 0;   // guest address of the parameter copy
 std::atomic<uint64_t> s_frames{ 0 };
 SDL_AudioStream* s_stream = nullptr;
 uint32_t s_targetFrames = 4;   // frames kept queued for the device (device-driven pacing)
-int s_outputChannels = 6;      // the device's: 2 when the stream downmixes the 5.1 mix
+int s_outputChannels = 6;      // the device's, as opened: below 6 SDL converts the 5.1 to them
 uint64_t s_dropped = 0;
 constexpr int kFrameBytes = int(kFrameSamples) * 6 * 4;
+
+// On a stereo device SDL folds the 5.1 down with its own matrix (SDL_Convert51ToStereo: front left / right 0.2945,
+// the centre 0.2082, the rears 0.2518 / 0.1545 crossed), quieter than the rexglue recomp's fold
+// (1 + 0.7071 centre + 0.5 surround, normalised: fronts 0.4531). Measured on the mix (AC6_AUDIO_DUMP), the same
+// loudness needs +1.5 dB in flight (rear-heavy), +1.9 dB in the briefing (centre-heavy), +1.1 to +1.95 dB at the main
+// menu: the channels are raised 1.75 dB before SDL's fold, and kept under SDL's stereo peak of 0.92 as that fold's
+// limiter keeps its own. Only for a stereo (or mono) device: a surround one plays the channels as they are.
+constexpr float kStereoGain = 1.2232f;   // +1.75 dB
+constexpr float kStereoPeak = 0.92f;
+float s_gain = 1.0f;
+
+// One sample's 6 channels (FL, FR, FC, LFE, BL, BR) raised by s_gain, scaled down where SDL's stereo fold of them
+// would pass kStereoPeak.
+void RaiseForStereo(float* c)
+{
+    for (int i = 0; i < 6; i++)
+        c[i] *= s_gain;
+    const float common = c[2] * 0.208181813f + c[3] * 0.090909094f;
+    const float left = c[0] * 0.294545442f + common + c[4] * 0.251818180f + c[5] * 0.154545456f;
+    const float right = c[1] * 0.294545442f + common + c[4] * 0.154545456f + c[5] * 0.251818180f;
+    const float peak = std::max(std::fabs(left), std::fabs(right));
+    if (peak > kStereoPeak)
+        for (int i = 0; i < 6; i++)
+            c[i] *= kStereoPeak / peak;
+}
 
 // AC6_AUDIO_DUMP=<file.wav>: the mixed output as a 6-channel float WAV (header rewritten every second).
 struct WavDump
@@ -110,18 +136,17 @@ void OpenOutput(bool start = true)
         log::Error("SDL audio init failed: {}", SDL_GetError());
         return;
     }
-    // OpenOutput() reads the format of the default playback device with SDL_GetAudioDeviceFormat().
-    // If the device has fewer than 6 channels, the game opens the device with 2 channels instead of 6.
-    // The environment variable AC6_AUDIO_CHANNELS=2 or AC6_AUDIO_CHANNELS=6 overrides this channel count.
-    // The game creates a 6-channel stream with SDL_CreateAudioStream() and binds it with SDL_BindAudioStream().
-    // When the device uses 2 channels, SDL downmixes the 5.1 stream to stereo inside the game.
-    // This downmix prevents silent dialogue on stereo sinks without channel positions.
+    // The game's 5.1 goes to a stream that SDL converts to the default device's own channel count when it has fewer
+    // than 6: SDL's matrix for that layout (mono, stereo, 2.1, quad, 4.1) mixes the centre, where the cutscenes'
+    // dialogue is, into the speakers there are. A device opened with 6 channels leaves that to the system: PipeWire
+    // passes a sink without speaker positions (Steam Remote Play's) its first channels alone, without the dialogue.
+    // AC6_AUDIO_CHANNELS=<1-6> opens the device with that many channels instead.
     const SDL_AudioSpec spec{ SDL_AUDIO_F32, 6, int(kSampleRate) };
     SDL_AudioSpec preferred{};
     int channels = 6;
     if (SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &preferred, nullptr) && preferred.channels > 0 && preferred.channels < 6)
-        channels = 2;
-    if (const char* v = std::getenv("AC6_AUDIO_CHANNELS"); v && (*v == '2' || *v == '6'))
+        channels = preferred.channels;
+    if (const char* v = std::getenv("AC6_AUDIO_CHANNELS"); v && *v >= '1' && *v <= '6' && !v[1])
         channels = *v - '0';
     const SDL_AudioSpec wanted{ SDL_AUDIO_F32, channels, int(kSampleRate) };
     const SDL_AudioDeviceID device = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &wanted);
@@ -147,8 +172,13 @@ void OpenOutput(bool start = true)
     int deviceFrames = 0;
     if (SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(s_stream), &deviceSpec, &deviceFrames) && deviceFrames > 0)
         s_targetFrames = uint32_t((deviceFrames + kFrameSamples - 1) / kFrameSamples) + 2;
-    log::Info("Audio output: {} ({} channels{}, {} Hz; device buffer {} samples, {} frames queued)", SDL_GetCurrentAudioDriver(),
-        s_outputChannels, s_outputChannels == 2 ? ", downmixed from 5.1" : "", kSampleRate, deviceFrames, s_targetFrames);
+    // Folded to stereo or mono by SDL (by the stream, or by the device when it has fewer channels than it was opened
+    // with): raised for SDL's fold.
+    const int folded = s_outputChannels < 6 ? s_outputChannels : deviceSpec.channels;
+    s_gain = folded > 0 && folded <= 2 ? kStereoGain : 1.0f;
+    log::Info("Audio output: {} ({} channel(s){}, {} Hz; device buffer {} samples, {} frames queued; the device {} channel(s){})",
+        SDL_GetCurrentAudioDriver(), s_outputChannels, s_outputChannels < 6 ? ", downmixed from 5.1" : "", kSampleRate, deviceFrames,
+        s_targetFrames, deviceSpec.channels, s_gain != 1.0f ? ", raised 1.75 dB for SDL's stereo fold" : "");
 }
 
 // Runs the game's mixer, one frame per call of its callback. With a device, its consumption sets the pace:
@@ -269,6 +299,9 @@ uint32_t XAudioSubmitRenderDriverFrame(uint32_t driver, const be<float>* samples
         return 0;
     if (s_muted.load(std::memory_order_relaxed))
         std::memset(interleaved, 0, sizeof(interleaved));
+    else if (s_gain != 1.0f)
+        for (uint32_t i = 0; i < kFrameSamples; i++)
+            RaiseForStereo(&interleaved[i * 6]);
     // Latency bound for the timer fallback (device-driven pacing never queues this much): past 100 ms
     // queued, frames are dropped instead of letting the delay grow.
     if (SDL_GetAudioStreamQueued(s_stream) > int(kSampleRate / 10) * 6 * 4)
