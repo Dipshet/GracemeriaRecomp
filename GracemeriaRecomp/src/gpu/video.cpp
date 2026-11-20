@@ -909,7 +909,8 @@ void Video::Present(uint32_t vblanks, bool waitAll, bool pumpEvents)
         deferred->Finish();
     commandLists[slot]->end();
     frameOpen = false;
-    const PresentJob job{ slot, swapChainIndex, imageAcquired, vblanks, timeline ? timelineIssued.load(std::memory_order_relaxed) + 1 : 0 };
+    const PresentJob job{ slot, swapChainIndex, imageAcquired, vblanks, timeline ? timelineIssued.load(std::memory_order_relaxed) + 1 : 0,
+        breadcrumbs::Made() };
     if (timeline)
         timelineIssued.store(job.timeline, std::memory_order_release);
     imageAcquired = false;
@@ -1010,6 +1011,7 @@ void Video::Execute(const PresentJob& job)
         std::lock_guard lock(*vq->queue->mutex);
         plume::NoteVulkanResult(vkQueueSubmit(vq->queue->vk, 1, &submit, VK_NULL_HANDLE));
     }
+    breadcrumbs::Submitted(job.breadcrumbs);
     CheckDeviceLost();
     const auto t0 = Clock::now();
     Pace(job.vblanks);   // the GPU works on the frame meanwhile

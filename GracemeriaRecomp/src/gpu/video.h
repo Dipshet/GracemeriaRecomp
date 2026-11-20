@@ -184,6 +184,7 @@ private:
         bool hasImage = false;
         uint32_t vblanks = 0;
         uint64_t timeline = 0;   // the value its submission signals
+        uint32_t breadcrumbs = 0;   // the GPU breadcrumbs made up to its end (gpu/breadcrumbs.h)
     };
     void* timeline = nullptr;    // VkSemaphore (timeline)
     std::atomic<uint64_t> timelineIssued{ 0 };
