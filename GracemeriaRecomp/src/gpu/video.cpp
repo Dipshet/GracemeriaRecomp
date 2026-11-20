@@ -311,6 +311,17 @@ bool Video::Init()
         log::Info("Vulkan device: {} (driver {}, {} MB video memory)", d.name,
             system_info::DriverVersion(uint32_t(d.vendor), d.driverVersion), d.dedicatedVideoMemory / (1024 * 1024));
     }
+    // The renderer needs Vulkan 1.2 (buffer device addresses, descriptor indexing, timeline semaphores). On an older
+    // driver the first of those calls is to a function the driver doesn't have. The game stops with a message instead.
+    if (const auto* vk = dynamic_cast<const plume::VulkanDevice*>(device.get()); vk && vk->physicalDeviceProperties.apiVersion < VK_API_VERSION_1_2)
+    {
+        const uint32_t v = vk->physicalDeviceProperties.apiVersion;
+        log::Error("{} offers Vulkan {}.{}.{}: the game needs Vulkan 1.2 or newer (update the graphics driver)", device->getDescription().name,
+            VK_API_VERSION_MAJOR(v), VK_API_VERSION_MINOR(v), VK_API_VERSION_PATCH(v));
+        static const std::string reason = std::format("the graphics driver offers Vulkan {}.{}, the game needs 1.2 or newer. "
+            "Update the graphics driver", VK_API_VERSION_MAJOR(v), VK_API_VERSION_MINOR(v));
+        crash::Shutdown(1, reason.c_str());
+    }
     if (const auto* vk = dynamic_cast<const plume::VulkanDevice*>(device.get()))
         log::Info("Vulkan paths: {}, {}", vk->dynamicRenderingSupported ? "dynamic rendering" : "render passes",
             vk->pipelineLibrariesSupported ? "pipeline libraries" : "whole pipelines");
