@@ -432,6 +432,8 @@ struct Renderer
     float worldResX = 1.0f, worldResY = 1.0f;
     uint32_t worldColorSurface = 0, worldDepthSurface = 0;
     uint64_t worldFrame = ~0ull;
+    // The frame the scene image's post steps (ambient occlusion to FSR) last ran in: once a frame.
+    uint64_t scenePostFrame = ~0ull;
     HostImage fsrColor;
     float worldMipBias = 0.0f;
     const HostImage* taaSurface = nullptr;
@@ -12221,9 +12223,15 @@ void ResolveImpl(uint32_t device, uint32_t flags, const ResolveRect* srcRect, ui
                 }
                 // The scene image (0xA5BEB000, the world pass's 1280x720 resolve, which the post chain, the distortion
                 // and the composite read), once its last part is in (the game resolves it in halves): ambient
-                // occlusion, emitter light, SMAA, then TAA or FSR and the object motion blur.
-                if (!depth && (fetch.BaseAddress() & 0x1FFFFFFF) == 0x05BEB000 && dx + w >= int32_t(dstW) && dy + h >= int32_t(dstH))
+                // occlusion, emitter light, SMAA, then TAA or FSR and the object motion blur. Once a frame: as a mission is
+                // paused the game resolves the finished frame (its HUD on it) into the same image again, as the pause
+                // menu's background. Taken for the scene, that copy had the ambient occlusion over it a second time,
+                // without the terrain's depth (the frame's terrain draws already used) and so on the terrain too, held
+                // for as long as the game stays paused.
+                if (!depth && (fetch.BaseAddress() & 0x1FFFFFFF) == 0x05BEB000 && dx + w >= int32_t(dstW) && dy + h >= int32_t(dstH) &&
+                    s_r.scenePostFrame != s_r.frame)
                 {
+                    s_r.scenePostFrame = s_r.frame;
                     // (The sea's reflection of the scene: the scene's surface, whose sea draws give the camera.)
                     s_r.seaSceneSurface = surface;
                     // Ambient occlusion into the scene's colour, before the anti-aliasing.
