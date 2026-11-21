@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(GracemeriaRecomp VERSION 1.0.0 LANGUAGES C CXX)
+project(GracemeriaRecomp LANGUAGES C CXX)
 
 # AC6 native runtime. Builds with llvm-mingw on Windows (toolchain/llvm-mingw.cmake) and with
 # the system clang on Linux (build_linux.sh).
@@ -404,11 +404,22 @@ if (AC6_X86_LEVEL STREQUAL "v2")
     target_compile_definitions(ac6_runtime PUBLIC AC6_X86_V2=1)
 endif()
 target_compile_options(ac6_xenonutils PRIVATE -gline-tables-only)
-# The version (project() above), for the log and the update check (update/updater.cpp), and whether this is a release
-# build (AC6_RELEASE: one that updates itself from the GitHub releases; the build scripts pass the AC6_RELEASE
-# environment variable, off unless set): on that file alone, so a new version or the switch rebuilds one file.
+# The version, for the log and the update check (update/updater.cpp), and whether this is a release build (AC6_RELEASE:
+# one that updates itself from the GitHub releases; the build scripts pass the AC6_RELEASE environment variable, off
+# unless set): on that file alone, so a new version or the switch rebuilds one file. The repository holds no version:
+# a release is built with AC6_VERSION set (-DAC6_VERSION or the environment, e.g. 1.0.1, the release's tag without its
+# v), any other build is "dev".
 option(AC6_RELEASE "A release build: it updates itself from the project's GitHub releases" OFF)
-set(AC6_UPDATER_DEFINITIONS "AC6_VERSION=\"${PROJECT_VERSION}\"")
+if (NOT DEFINED AC6_VERSION OR AC6_VERSION STREQUAL "")
+    set(AC6_VERSION "$ENV{AC6_VERSION}")
+endif()
+if (AC6_VERSION STREQUAL "")
+    if (AC6_RELEASE)
+        message(FATAL_ERROR "A release build needs its version: set AC6_VERSION (e.g. 1.0.1)")
+    endif()
+    set(AC6_VERSION "dev")
+endif()
+set(AC6_UPDATER_DEFINITIONS "AC6_VERSION=\"${AC6_VERSION}\"")
 if (AC6_RELEASE)
     list(APPEND AC6_UPDATER_DEFINITIONS "AC6_RELEASE=1")
 endif()
