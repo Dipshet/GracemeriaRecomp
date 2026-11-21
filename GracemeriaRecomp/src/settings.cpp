@@ -271,6 +271,11 @@ const Setting kSettings[] = {
 
     // The mouse in flight with keyboard and mouse on (input/kbm.cpp, the overlay's Controls tab).
     // The rest of [mouse] (mode, smoothing, curve, deadzones, recentring) stays the file's only.
+    { "mouse", "mouse_controls", "AC6_MOUSE_CONTROLS", kText, "\"camera\"",
+      "What the mouse controls in flight\n"
+      "Aircraft: the mouse steers, hold the camera key (Left Alt) to look around\n"
+      "Camera: the mouse looks around, hold the camera key (Left Alt) to steer\n"
+      "Default: Aircraft" },
     { "mouse", "steer_model", "AC6_MOUSE_STEER_MODEL", kText, "\"position\"",
       "How the mouse steers the aircraft\n"
       "Velocity: how fast you move the mouse sets the stick, similar to Ace Combat 7\n"
@@ -549,6 +554,7 @@ const Ui kUi[] = {
     { "hdr_stripes", "Debug", "HDR brightness stripes", "off=Off|output=Display brightness|scene=Game's values", 0, 0, 0, "off", "RENDERING" },
     { "keyboard_mouse", "Controls", "Keyboard and mouse", "", 0, 0, 0, "0", "GENERAL" },
     { "cursor_hide_seconds", "Controls", "Hide idle cursor after (s)", "", 0, 30, 0.5, "3", "GENERAL" },
+    { "mouse_controls", "Controls", "Mouse controls", "aircraft=Aircraft|camera=Camera", 0, 0, 0, "aircraft", "MOUSE" },
     { "steer_model", "Controls", "Steering model", "velocity=Velocity|position=Position", 0, 0, 0, "velocity", "MOUSE" },
     { "sensitivity_x", "Controls", "Sensitivity X (roll)", "", 0.25, 3, 0.05, "1", "MOUSE" },
     { "sensitivity_y", "Controls", "Sensitivity Y (pitch)", "", 0.25, 3, 0.05, "1", "MOUSE" },

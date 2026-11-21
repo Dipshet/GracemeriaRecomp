@@ -730,7 +730,7 @@ constexpr const char* kLiveKeys[] = { "fullscreen", "refresh", "vsync", "frame_r
     "deband", "anisotropic_override", "lod_scale", "centroid", "dof_fix", "wide_blurs", "aa", "ambient_occlusion", "shadow_detail", "film_grain", "vignette",
     "chromatic_aberration", "motion_blur", "bloom", "captures",
     // The mouse, then the controller's settings.
-    "steer_model", "sensitivity_x", "sensitivity_y", "invert_x", "invert_y",
+    "mouse_controls", "steer_model", "sensitivity_x", "sensitivity_y", "invert_x", "invert_y",
     "touchpad_back", "adaptive_triggers", "custom_flight", "analog_yaw",
     // Advanced controls' axes.
     "pitch_deadzone", "pitch_full", "pitch_curve", "pitch_invert", "roll_deadzone", "roll_full", "roll_curve", "roll_invert",

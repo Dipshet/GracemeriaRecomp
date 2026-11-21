@@ -6,6 +6,7 @@
 //    the last 300 ms. Pause and the menus stop the simulation, so the menu set takes over there.
 //  - in flight the mouse steers (pitch / roll, a velocity model with smoothing, the stick shaped by a deadzone, a curve
 //    and an anti-deadzone that clears the game's own). Holding the camera key (Left Alt) pans the camera with it instead.
+//    With mouse_controls = "camera" it is the other way round: the mouse pans the camera, the camera key held steers.
 //  - bindings and mouse feel in ac6_settings.toml's [mouse], [menu_keys] and [flight_keys] (an
 //    ac6_input.toml's [mouse], [menu] and [flight] are moved there once), read again when the file changes (about once a
 //    second: the settings overlay's Apply too).
@@ -219,10 +220,15 @@ constexpr double kSensitivityUnit = 1.5;
 struct MouseConfig
 {
     bool steer = true;               // mode = "steer" | "off"
+    bool cameraFirst = false;        // mouse_controls = "aircraft" | "camera": what it moves without the camera key
     bool velocity = true;            // steer_model = "velocity" | "position"
     double sensX = 1.5, sensY = 1.5;
     bool invertX = false, invertY = true;
     double smoothing = 0.035, curve = 1.0, deadzone = 0.0, antiDeadzone = 0.15, recenter = 3.0;
+    // With mouse_controls = "camera": the camera's return to the centre (of a full deflection a second), how long the
+    // mouse must be still before it starts (seconds), and where the camera stick starts: past the game's stick dead zone
+    // (about 29% of full deflection), which the steering's anti-deadzone leaves the first mouse movements inside.
+    double cameraRecenter = 0.75, cameraRecenterDelay = 2.0, cameraAntiDeadzone = 0.3;
 };
 
 struct Config
@@ -311,7 +317,10 @@ void MigrateInputFile()
         {
             const std::map<std::string_view, double> numbers = { { "sensitivity_x", mouseDefaults.sensX },
                 { "sensitivity_y", mouseDefaults.sensY }, { "smoothing", mouseDefaults.smoothing }, { "curve_exponent", mouseDefaults.curve },
-                { "deadzone", mouseDefaults.deadzone }, { "anti_deadzone", mouseDefaults.antiDeadzone }, { "recenter", mouseDefaults.recenter } };
+                { "deadzone", mouseDefaults.deadzone }, { "anti_deadzone", mouseDefaults.antiDeadzone }, { "recenter", mouseDefaults.recenter },
+                { "camera_recenter", mouseDefaults.cameraRecenter },
+                { "camera_recenter_delay", mouseDefaults.cameraRecenterDelay },
+                { "camera_anti_deadzone", mouseDefaults.cameraAntiDeadzone } };
             if (const auto it = numbers.find(key); it != numbers.end())
                 return node.is_number() && std::fabs(node.value<double>().value_or(-1.0) - it->second) < 1e-9;
             if (key == "invert_x" || key == "invert_y")
@@ -414,6 +423,9 @@ void Load()
         c.deadzone = std::clamp((*m)["deadzone"].value_or(c.deadzone), 0.0, 0.95);
         c.antiDeadzone = std::clamp((*m)["anti_deadzone"].value_or(c.antiDeadzone), 0.0, 0.95);
         c.recenter = (*m)["recenter"].value_or(c.recenter);
+        c.cameraRecenter = std::max(0.0, (*m)["camera_recenter"].value_or(c.cameraRecenter));
+        c.cameraRecenterDelay = std::max(0.0, (*m)["camera_recenter_delay"].value_or(c.cameraRecenterDelay));
+        c.cameraAntiDeadzone = std::clamp((*m)["camera_anti_deadzone"].value_or(c.cameraAntiDeadzone), 0.0, 0.95);
     }
     // The mouse settings the settings layer has (from the environment, the file at start or the overlay's Apply)
     // override the [mouse] table's.
@@ -421,6 +433,8 @@ void Load()
         MouseConfig& c = next.mouse;
         if (const std::string v = settings::Get("AC6_MOUSE_STEER_MODEL"); !v.empty())
             c.velocity = v != "position";
+        if (const std::string v = settings::Get("AC6_MOUSE_CONTROLS"); !v.empty())
+            c.cameraFirst = v == "camera";
         for (const auto& [env, value] : { std::pair{ "AC6_MOUSE_SENSITIVITY_X", &c.sensX }, std::pair{ "AC6_MOUSE_SENSITIVITY_Y", &c.sensY } })
             if (const std::string v = settings::Get(env); !v.empty() && std::atof(v.c_str()) > 0.0)
                 *value = std::atof(v.c_str()) * kSensitivityUnit;
@@ -467,6 +481,7 @@ SDL_Window* s_window = nullptr;
 float s_mouseDX = 0.0f, s_mouseDY = 0.0f;   // relative motion since the last update
 bool s_relative = false;
 double s_rateX = 0.0, s_rateY = 0.0, s_stickX = 0.0, s_stickY = 0.0, s_camX = 0.0, s_camY = 0.0;
+int64_t s_camMoved = 0;   // when the mouse last moved the camera (ms)
 int64_t s_lastPoll = 0, s_lastMotion = 0;
 bool s_cursorHidden = false;
 
@@ -770,14 +785,30 @@ void Apply(PadState& pad)
             dx = -dx;
         if (m.invertY)
             dy = -dy;
-        if (cameraKey)
+        // The camera with the camera key held, or without it when the mouse controls the camera.
+        if (cameraKey != m.cameraFirst)
         {
             s_rateX = s_rateY = 0.0;
             s_camX = std::clamp(s_camX + dx * m.sensX / 500.0, -1.0, 1.0);
             // The camera looks where the mouse moves, up with the mouse up, whatever invert_y: that setting is the
             // nose's (the mouse as a stick). So invert_y is undone here.
             s_camY = std::clamp(s_camY + (m.invertY ? dy : -dy) * m.sensY / 500.0, -1.0, 1.0);
-            camX = s_camX, camY = s_camY;
+            if (dx != 0.0 || dy != 0.0)
+                s_camMoved = now;
+            if (m.cameraFirst)
+            {
+                // The mouse as the camera by default: once it has been still for camera_recenter_delay, the view drifts
+                // back to the centre (camera_recenter of a full deflection a second), and the stick is shaped as the
+                // steering's but starting at camera_anti_deadzone, so the first movement already turns the view.
+                if (now - s_camMoved >= int64_t(m.cameraRecenterDelay * 1000.0) && m.cameraRecenter > 0.0)
+                    for (double* c : { &s_camX, &s_camY })
+                        *c = *c > 0.0 ? std::max(0.0, *c - m.cameraRecenter * dt) : std::min(0.0, *c + m.cameraRecenter * dt);
+                MouseConfig shape = m;
+                shape.antiDeadzone = m.cameraAntiDeadzone;
+                camX = Shape(s_camX, shape), camY = Shape(s_camY, shape);
+            }
+            else
+                camX = s_camX, camY = s_camY;
         }
         else
         {
