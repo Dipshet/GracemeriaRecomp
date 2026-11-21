@@ -175,7 +175,7 @@ bool WidenAspect(PPCRegister& aspectRegister, bool* screen = nullptr)
 // camera's projection rebuilt after the picture-in-picture while the viewport is still its 208x144: that one is what
 // the next frame's object jobs and HUD snapshot start from), and in the main camera's field of view handed to the
 // object jobs and read by two HUD functions (mid-asm hooks below). Only in mission gameplay (the CModeTaskGame /
-// CModeTaskGameTutorial tasks, no cutscene playing), so cutscenes, replays, menus, the briefing and the hangar keep
+// CModeTaskGameTutorial tasks and the tutorial's other two, no cutscene playing), so cutscenes, replays, menus, the briefing and the hangar keep
 // their framing, and never in the AWACS picture-in-picture.
 constexpr double kGameFovDegrees = 46.0;
 constexpr double kPi = 3.14159265358979323846;
@@ -219,6 +219,8 @@ bool FovActive()
         return last;   // between tasks: as before
     case 0x820642F4:   // CModeTaskGame
     case 0x8206474C:   // CModeTaskGameTutorial
+    case 0x82066C24:   // CModeTaskGameTutorial_FromMissionMenu
+    case 0x82066C84:   // CModeTaskGameTutorial_CampaignMission
         return last = true;
     default:
         return last = false;
@@ -1434,6 +1436,8 @@ bool MissionTask()
     {
     case 0x820642F4:   // CModeTaskGame
     case 0x8206474C:   // CModeTaskGameTutorial
+    case 0x82066C24:   // CModeTaskGameTutorial_FromMissionMenu
+    case 0x82066C84:   // CModeTaskGameTutorial_CampaignMission
     case 0x820646EC:   // CModeTaskGameReplay
     case 0x82066BC4:   // CModeTaskGameReplayMission
         return last = true;
