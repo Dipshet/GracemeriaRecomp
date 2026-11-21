@@ -226,9 +226,10 @@ struct MouseConfig
     bool invertX = false, invertY = true;
     double smoothing = 0.035, curve = 1.0, deadzone = 0.0, antiDeadzone = 0.15, recenter = 3.0;
     // With mouse_controls = "camera": the camera's return to the centre (of a full deflection a second), how long the
-    // mouse must be still before it starts (seconds), and where the camera stick starts: past the game's stick dead zone
-    // (about 29% of full deflection), which the steering's anti-deadzone leaves the first mouse movements inside.
-    double cameraRecenter = 0.75, cameraRecenterDelay = 2.0, cameraAntiDeadzone = 0.3;
+    // mouse must be still before it starts (seconds), and where the camera stick starts: just inside the game's stick
+    // dead zone (about 29% of full deflection), so the first mouse movements soon turn the view (the steering's
+    // anti-deadzone leaves them deep inside it) but a small band around the centre still holds the camera there.
+    double cameraRecenter = 0.75, cameraRecenterDelay = 2.0, cameraAntiDeadzone = 0.27;
 };
 
 struct Config
@@ -799,7 +800,7 @@ void Apply(PadState& pad)
             {
                 // The mouse as the camera by default: once it has been still for camera_recenter_delay, the view drifts
                 // back to the centre (camera_recenter of a full deflection a second), and the stick is shaped as the
-                // steering's but starting at camera_anti_deadzone, so the first movement already turns the view.
+                // steering's but starting at camera_anti_deadzone, so a small movement already turns the view.
                 if (now - s_camMoved >= int64_t(m.cameraRecenterDelay * 1000.0) && m.cameraRecenter > 0.0)
                     for (double* c : { &s_camX, &s_camY })
                         *c = *c > 0.0 ? std::max(0.0, *c - m.cameraRecenter * dt) : std::min(0.0, *c + m.cameraRecenter * dt);
