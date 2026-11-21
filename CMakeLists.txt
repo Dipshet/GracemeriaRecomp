@@ -514,23 +514,10 @@ endforeach()
 # --- Plugins: native mods, mods/<mod>/<name>.dll, built on their own against GracemeriaRecomp/src/plugin/ac6_plugin.h
 # only. PSM (post-stall manoeuvres) has its own repository.
 
-# --- The example Lua mods (examples/mods): each assembled, with its native module, in build/example_mods/<mod>, ready to
-# copy into mods/ next to the game (they aren't installed there: the build doesn't change the game's mods).
+# --- The example Lua mods (examples/mods): each copied to build/example_mods/<mod>, ready to copy into mods/ next to the
+# game (they aren't installed there: the build doesn't change the game's mods).
 set(AC6_EXAMPLE_MODS "${CMAKE_BINARY_DIR}/example_mods")
-# (subdir: where in the mod's folder the DLL goes: bin for a Lua mod's module, "." for a plugin.)
-function(ac6_example_native target mod name subdir)
-    set_target_properties(${target} PROPERTIES OUTPUT_NAME ${name} PREFIX ""
-        RUNTIME_OUTPUT_DIRECTORY "${AC6_EXAMPLE_MODS}/${mod}/${subdir}" LIBRARY_OUTPUT_DIRECTORY "${AC6_EXAMPLE_MODS}/${mod}/${subdir}")
-    target_include_directories(${target} PRIVATE GracemeriaRecomp/src/mods)
-    target_compile_options(${target} PRIVATE -Wall -Wno-unused-function)
-    if (WIN32)
-        target_link_options(${target} PRIVATE -static)   # self-contained: libc++ inside the DLL
-    endif()
-endfunction()
-add_library(ac6_example_aircraft_slots SHARED examples/mods/aircraft_slots/native/aircraft_slots.cpp)
-target_include_directories(ac6_example_aircraft_slots SYSTEM PRIVATE tools/XenonRecomp/thirdparty/tomlplusplus/include)
-ac6_example_native(ac6_example_aircraft_slots aircraft_slots aircraft_slots ".")   # a plugin
-set(AC6_EXAMPLE_MOD_NAMES aircraft_list aircraft_slots input_display)
+set(AC6_EXAMPLE_MOD_NAMES aircraft_list input_display)
 set(AC6_EXAMPLE_MOD_COPIES "")
 foreach (mod ${AC6_EXAMPLE_MOD_NAMES})
     file(GLOB_RECURSE files CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/mods/${mod}/*")
@@ -541,7 +528,7 @@ foreach (mod ${AC6_EXAMPLE_MOD_NAMES})
         DEPENDS ${files} COMMENT "Example mod ${mod}" VERBATIM)
     list(APPEND AC6_EXAMPLE_MOD_COPIES "${stamp}")
 endforeach()
-add_custom_target(ac6_example_mods ALL DEPENDS ${AC6_EXAMPLE_MOD_COPIES} ac6_example_aircraft_slots)
+add_custom_target(ac6_example_mods ALL DEPENDS ${AC6_EXAMPLE_MOD_COPIES})
 
 # --- shadertest: differential test of the shader translator (tools/shadertest) -------------------
 # Windows only: it compiles through DXC's library (gpu/dxc.cpp). Built only when tools/shadertest is present.

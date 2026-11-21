@@ -198,7 +198,7 @@ downloads it into `toolchain/sniper` (1.2 GB) and prints its path, then
 | `GracemeriaRecompLib` | The recompiled game code: XenonRecomp's config (`config`) and the C++ it writes (`ppc`, made by the build) |
 | `tools` | XenonRecomp (adapted for this port), XexDump, the build's CMake scripts, the patches to the FidelityFX SDK and FFmpeg, an IDA script that exports symbols for mods |
 | `docs` | The modding guide |
-| `examples` | Example mods (Lua, and a native plugin), built into `build/example_mods` |
+| `examples` | Example Lua mods, copied into `build/example_mods` by the build |
 | `thirdparty` | The libraries the runtime uses (`thirdparty/README.md` lists versions, licences and changes) |
 | `toolchain` | The toolchain's download script and compiler settings |
 

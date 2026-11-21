@@ -29,7 +29,7 @@ ac6.events.on("frame", function(dt, frame)
 end)
 
 -- The list the hangar and the aircraft select build: the aircraft the save has unlocked. Priority 1000: the outermost
--- hook, so its post runs after other mods' (the aircraft_slots mod appends its aircraft there).
+-- hook, so its post runs after other mods' (a mod that adds aircraft appends them there).
 ac6.game.hook(aircraft.BUILD_LIST, {
     priority = 1000,
     post = function(c)

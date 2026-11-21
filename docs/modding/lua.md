@@ -353,8 +353,7 @@ the top of a `mods/<mod>/` folder as a plugin before `init.lua` runs. A Lua mod'
 as a Lua module: its init isn't run again, and its hooks belong to the plugin, not to the mod. The log warns when that
 happens.
 
-A DLL meant to run without Lua is a plugin: put it at the top of its folder, with no scripts
-(`examples/mods/aircraft_slots`).
+A DLL meant to run without Lua is a plugin: put it at the top of its folder, with no scripts.
 
 To build one on Windows with the toolchain the game's build downloaded, from the repository's top folder (after the
 game's build, which makes `lua51.dll` and its import library):
