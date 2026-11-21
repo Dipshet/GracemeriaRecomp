@@ -141,10 +141,26 @@ constexpr uint32_t kCriticalSectionSpins = 1024;
 
 void RtlInitializeCriticalSection(XRtlCriticalSection* cs)
 {
+    // Threads can already wait on a critical section the game hasn't initialised yet: entered while its memory was still
+    // zero (a lock count of 0 reads as held), they queued on its event. The stream system's poll thread does this when
+    // the game sets up the stream records more than its first 5 ms sleep after starting it: initialised over it, 
+    // the lock read free and the thread waited for good, and so did the soundtrack it serves (the campaign stuck
+    // on its loading screen). The lock goes to the first waiter instead, as if the initialisation had come first 
+    // and that thread had found it free; the others stay queued behind it.
+    const uint32_t header = g_memory.MapVirtual(&cs->header);
+    const size_t waiters = WaiterCount(header);
     InitializeHeader(cs->header, kObjEventSynchronization, 0);
-    cs->lockCount = -1;
     cs->recursionCount = 0;
     cs->owningThread = 0;
+    if (waiters == 0)
+    {
+        cs->lockCount = -1;
+        return;
+    }
+    cs->lockCount = int32_t(waiters) - 1;   // the holder and the rest still waiting
+    log::Info("RtlInitializeCriticalSection({:08X}): {} thread(s) already waiting on it, the lock handed to the first",
+        header, waiters);
+    SetEvent(header);
 }
 
 uint32_t RtlInitializeCriticalSectionAndSpinCount(XRtlCriticalSection* cs, uint32_t spinCount)

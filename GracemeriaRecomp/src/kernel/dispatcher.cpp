@@ -442,6 +442,13 @@ void DumpWaits()
     }
 }
 
+size_t WaiterCount(uint32_t header)
+{
+    Locked lock;
+    const auto it = s_waitLists.find(header);
+    return it == s_waitLists.end() ? 0 : it->second.size();
+}
+
 void DelayExecution(Timeout interval)
 {
     if (interval.infinite)
