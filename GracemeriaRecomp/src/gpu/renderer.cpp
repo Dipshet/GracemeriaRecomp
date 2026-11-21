@@ -9206,11 +9206,16 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
     // with its contents:
     // a pixel column at the 16:9 box's edge would be covered on some frames by neither the menu's bands nor their wrapped
     // copies (faint light lines at the box's edges where the hangar's top and bottom bands darken it).
-    if ((TaaOn() || FsrRunning()) && targets.color && targets.color == s_r.taaSurface && TaaSurfaceLive() && !t_uiDraw)
+    // Moved in clip space (the half-pixel offset's oPos.xy += offset x oPos.w, before the y flip), not by moving the
+    // viewport: Vulkan clips to the viewport, so a viewport moved up or left by up to half a pixel left the samples past
+    // its far edges uncovered on those frames.
+    if ((TaaOn() || FsrRunning()) && targets.color && targets.color == s_r.taaSurface && TaaSurfaceLive() && !t_uiDraw &&
+        viewport.width > 0.0f && viewport.height > 0.0f)
     {
         const auto [jx, jy] = TaaJitter(SeedFrame());
-        viewport.x += jx;
-        viewport.y += jy;
+        const float offset[2] = { sc.halfPixelOffsetX + 2.0f * jx / viewport.width, sc.halfPixelOffsetY - 2.0f * jy / viewport.height };
+        std::memcpy(shared.memory + offsetof(SharedConstants, halfPixelOffsetX), offset, sizeof(offset));
+        std::memcpy(&sc.halfPixelOffsetX, offset, sizeof(offset));
         // The world's view-projection (c116-c119) as a perspective draw into the scene has it: its z column depends on the
         // position (the sky's and the clouds' pin z to the far plane), and so does w. Not every such draw holds it there:
         // ~60 of a frame's ~670 (some object shaders) put their own object's world x view-projection in c116-c119, and
