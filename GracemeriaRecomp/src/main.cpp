@@ -10,6 +10,7 @@
 #include "game/game_modes.h"
 #include "game/packages.h"
 #include "plugin/plugins.h"
+#include "mods/mods.h"
 #include "gpu/capture.h"
 #include "gpu/renderer.h"
 #include "gpu/video.h"
@@ -229,6 +230,8 @@ int Run(int argc, char** argv)
     // AceCombat6.exe --extract-packages [--items] [folder] [first] [count]: the disc's data packages unpacked with the game's own
     // decompressor, without starting the game (game/packages.h).
     const bool extract = argc > 1 && std::string_view(argv[1]) == "--extract-packages";
+    if (!extract)
+        mods::LoadEarly();      // Lua mods (mods/mods.h): found, their early.lua run before the window and the device
     if (!extract && gpu::g_video.Init())   // without a usable Vulkan device the game still runs (headless)
         gpu::InitRenderer();
 
@@ -252,6 +255,7 @@ int Run(int argc, char** argv)
     }
     game::LoadPackageMods();    // mods' packages built before the game reads DATA.TBL (game/packages.h)
     plugin::Load();             // mods' plugins (plugin/ac6_plugin.h), before the game's code runs
+    mods::LoadInit();           // Lua mods' init.lua, before the game's code runs
     game::InstallModeHooks();   // logs the game's mode changes
     fs::StartDlcScan(g_module.titleId);   // checked while the game boots (the game lists DLC after the save loads)
     // Updates (release downloads only): checked in the background, not in scripted runs (auto-start macros, background

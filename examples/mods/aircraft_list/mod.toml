@@ -1,0 +1,6 @@
+# Prints the game's playable aircraft into ac6_runtime.log: copy this folder into mods/ next to the game.
+name = "Aircraft list"
+version = "1.0.0"
+author = "GracemeriaRecomp"
+description = "Logs every playable aircraft, its data from the game's aircraft table, and which ones the save has unlocked."
+api = 1

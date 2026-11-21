@@ -56,6 +56,11 @@ struct RecompilerConfig
     // AC6: functions that keep the non-volatile registers in the context despite non_volatile_as_local (they
     // share registers outside the ABI: SEH funclets use their parent's), together with the save/restore helpers.
     std::unordered_set<uint32_t> contextRegisterFunctions;
+    // AC6: a hook gate at the top of every recompiled function (hook_gates = true): mods can hook any function at runtime.
+    // Each gated function gets a slot in PPCHookSlots (by its index in the function list), checked on entry. The register
+    // save/restore helpers and hook_gate_exclude's addresses get none.
+    bool hookGates = false;
+    std::unordered_set<uint32_t> hookGateExclude;
     std::unordered_map<uint32_t, RecompilerMidAsmHook> midAsmHooks;
 
     void Load(const std::string_view& configFilePath);

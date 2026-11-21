@@ -1,0 +1,6 @@
+# Shows player 1's controller over the game: copy this folder into mods/ next to the game.
+name = "Input display"
+version = "1.0.0"
+author = "GracemeriaRecomp"
+description = "Player 1's sticks, triggers and buttons in the corner of the picture. F6 shows or hides it; F7 swaps A and B for the game (the pad event)."
+api = 2

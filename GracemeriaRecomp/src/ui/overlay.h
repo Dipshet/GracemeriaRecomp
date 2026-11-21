@@ -33,7 +33,35 @@ struct DrawFrame
     std::vector<TextureUpdate> textures;
 };
 // The renderer, once per presented frame: the textures to create, update or free (always), and the frame to draw
-// (returns false when the overlay is closed).
+// (returns false when nothing is drawn over the game).
 bool TakeFrame(DrawFrame& out);
 
 } // namespace ac6::ui
+
+// Mods' drawing (mods/mods.h: the "draw" event): a layer over the game, under the settings overlay, built with the
+// overlay's ImGui frame on the window's thread. The functions draw only on that thread while the mods' draw handlers
+// run (Active); anywhere else they do nothing. Coordinates are window units (the mouse's), (0, 0) the top left;
+// colours 0xAARRGGBB (alpha 0: transparent).
+namespace ac6::ui::draw {
+
+bool Active();
+// The window, the game's picture in it (the letterboxed frame), and the game's 2D canvas (its 1280x720, 16:9 in the
+// picture: where the game draws its HUD and menus).
+void Size(float& width, float& height);
+void View(float& x, float& y, float& width, float& height);
+void Canvas(float& x, float& y, float& width, float& height);
+// thickness <= 0: filled. A filled polygon is convex.
+void Line(float x0, float y0, float x1, float y1, uint32_t color, float thickness);
+void Rect(float x0, float y0, float x1, float y1, uint32_t color, float rounding, float thickness);
+void Circle(float x, float y, float radius, uint32_t color, float thickness);
+void Triangle(float x0, float y0, float x1, float y1, float x2, float y2, uint32_t color, float thickness);
+void Polyline(const float* xy, int points, uint32_t color, bool closed, float thickness);
+// Text at its top left, `size` its height in window units (0: 18), in the overlay's font (mono: its numbers' font).
+void Text(float x, float y, const char* text, uint32_t color, float size, bool mono);
+void TextSize(const char* text, float size, bool mono, float& width, float& height);
+// Drawing clipped to a rectangle until PopClip. PopClips: the clips left pushed (after each mod's handlers).
+void PushClip(float x0, float y0, float x1, float y1);
+void PopClip();
+void PopClips();
+
+} // namespace ac6::ui::draw

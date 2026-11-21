@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct SDL_Window;
@@ -37,6 +38,11 @@ std::map<std::string, std::vector<std::string>> ReadBindings();
 bool SaveBindings(const std::vector<std::pair<BindingAction, std::vector<std::string>>>& changes, std::string& error);
 // The file's name for the key, mouse button or wheel notch of a key-down, button-down or wheel event ("" for others).
 std::string KeyName(const SDL_Event& event);
+// A key or mouse button by the file's names ("F5", "LeftControl", "Numpad1", "Mouse1"; "Shift" is either shift): its
+// scancodes (SDL_SCANCODE_*) and mouse buttons (kMouseCode + SDL_BUTTON_*). False: no such key (the wheel's names
+// included: it isn't held). Any thread.
+constexpr uint32_t kMouseCode = 0x10000;
+bool KeyCodes(std::string_view name, std::vector<uint32_t>& out);
 std::string BindingsPath();
 
 } // namespace ac6::input::kbm
