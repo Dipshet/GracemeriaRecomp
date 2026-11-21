@@ -504,9 +504,10 @@ foreach(exe ac6 ac6_release)
         # Recompiled code nests deeply on the host stack: 16 MB reserve for every thread (main + CreateThread default).
         target_link_options(${exe} PRIVATE -Wl,--stack,16777216)
     else()
-        # libluajit-5.1.so sits next to the executable (tools/cmake/luajit.cmake): found there wherever the game is put,
-        # not at the build tree's absolute path (CMake's default build RPATH).
-        set_target_properties(${exe} PROPERTIES BUILD_RPATH "\$ORIGIN")
+        # libluajit-5.1.so sits next to the executable (tools/cmake/luajit.cmake): found there wherever the game is put.
+        # The RUNPATH is $ORIGIN alone: a BUILD_RPATH would be added to CMake's own, the build folder's absolute path,
+        # which then went out with the executable.
+        set_target_properties(${exe} PROPERTIES BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "\$ORIGIN")
     endif()
     # (Linux: the threads' 16 MB are set at startup, main.cpp and platform/platform_linux.cpp.)
 endforeach()
