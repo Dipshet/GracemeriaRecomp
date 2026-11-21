@@ -16,8 +16,11 @@ set(CMAKE_C_COMPILER_TARGET x86_64-linux-gnu)
 set(CMAKE_CXX_COMPILER_TARGET x86_64-linux-gnu)
 # GCC 14 lives in its own prefix in the SDK (/usr/lib/gcc-14): its libstdc++ headers and libraries, not GCC 10's.
 set(AC6_SNIPER_GCC "--gcc-install-dir=${AC6_SNIPER_SYSROOT}/usr/lib/gcc-14/lib/gcc/x86_64-linux-gnu/14")
-set(CMAKE_C_FLAGS_INIT "${AC6_SNIPER_GCC}")
-set(CMAKE_CXX_FLAGS_INIT "${AC6_SNIPER_GCC}")
+# The sysroot's path is recorded as /sysroot (the debug information, the standard library's file names in lambda types
+# and __FILE__): the sysroot sits in the building account's folders, which would otherwise go out with the executables.
+set(AC6_SNIPER_MAP "-ffile-prefix-map=${AC6_SNIPER_SYSROOT}=/sysroot")
+set(CMAKE_C_FLAGS_INIT "${AC6_SNIPER_GCC} ${AC6_SNIPER_MAP}")
+set(CMAKE_CXX_FLAGS_INIT "${AC6_SNIPER_GCC} ${AC6_SNIPER_MAP}")
 # libstdc++ static (the runtime's is GCC 10's); libgcc_s (the unwinder, ABI-stable, in every distribution) shared. The
 # GCC 14 prefix has no libgcc_s of its own: GCC 10's, through a directory holding only it (GCC 10's own directory would
 # also offer its older libstdc++ ahead of 14's).
