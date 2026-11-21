@@ -431,6 +431,18 @@ const Setting kSettings[] = {
       "Off: classic render passes instead, and whole pipelines (Pipeline libraries need it)\n"
       "Try Off if the game crashes, freezes or draws wrongly with your graphics driver\n"
       "Default: On" },
+    // The renderer's kept copies of guest vertex data (gpu/renderer.cpp: UseVertexStream, and the streams the shaders
+    // read by address).
+    { "bug_reports", "vertex_cache", "AC6_VERTEX_CACHE", kBool, "false",
+      "Keeps the models' vertex data on the graphics card from frame to frame, copying only what the game changes\n"
+      "Off: copied again every frame, costs CPU\n"
+      "Try Off if parts of aircraft or other models go missing after playing for a while\n"
+      "Default: On" },
+    { "bug_reports", "stream_cache", "AC6_STREAM_CACHE", kBool, "false",
+      "Keeps the vertex data the game's shaders read directly on the graphics card from frame to frame, copying only what the game changes\n"
+      "Off: copied again every frame, costs CPU\n"
+      "Try Off if parts of aircraft or other models go missing after playing for a while\n"
+      "Default: On" },
     { "bug_reports", "gpu_debug", "AC6_GPU_DEBUG", kBool, "true",
       "Marks every draw so the log can name the one where the graphics card fails, and draws one frame at a time\n"
       "Much slower: only for reproducing a crash, a freeze or a rendering bug, then sending ac6_runtime.log\n"
@@ -591,6 +603,8 @@ const Ui kUi[] = {
     { "attitude_trace", "Debug", "Log camera every frame", "", 0, 0, 0, "0", "CAPTURE AND LOGS" },
     { "pipeline_libraries", "Debug", "Pipeline libraries", "", 0, 0, 0, "1", "GRAPHICS DRIVER" },
     { "dynamic_rendering", "Debug", "Dynamic rendering", "", 0, 0, 0, "1", "GRAPHICS DRIVER" },
+    { "vertex_cache", "Debug", "Vertex cache", "", 0, 0, 0, "1", "GRAPHICS DRIVER" },
+    { "stream_cache", "Debug", "Vertex stream cache", "", 0, 0, 0, "1", "GRAPHICS DRIVER" },
     { "gpu_debug", "Debug", "GPU debug mode", "", 0, 0, 0, "0", "GRAPHICS DRIVER" },
 };
 static_assert(std::size(kUi) == std::size(kSettings));
