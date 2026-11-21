@@ -33,16 +33,14 @@ port's runtime are adapted.
 
 ## System Requirements
 
-- **Game:** Ace Combat 6: Fires of Liberation, the North American release (4E4D07D1), as a disc image (`.iso`)
-  - The European and Japanese releases are **not supported**
-- **CPU** with AVX2 for Windows and Linux:
-  - Intel: Haswell (4th generation Core, 2013) or newer
-  - AMD: Excavator (2015) or Ryzen
-- **Older CPUs** without AVX2, with SSE4.2: the compatibility build, a download of its own (Windows only)
-- **GPU** with a Vulkan 1.2 driver
-- **Operating system:**
-  - Windows 10 or 11, 64-bit
-  - A modern 64-bit Linux distro
+**Game:** Ace Combat 6: Fires of Liberation, the North American release (4E4D07D1), as a disc image (`.iso`). The
+European and Japanese releases are **not supported**.
+
+| | Windows | Linux |
+|-|-|-|
+| **Operating system** | Windows 10 or 11, 64-bit | A modern 64-bit distro |
+| **CPU** | AVX2: Intel Haswell (4th generation Core, 2013) or newer, AMD Excavator (2015) or Ryzen<br>Older CPUs with SSE4.2: the compatibility build | AVX2: Intel Haswell (4th generation Core, 2013) or newer, AMD Excavator (2015) or Ryzen |
+| **GPU** | NVIDIA or AMD, with a Vulkan 1.2 driver<br>Intel GPUs are **not supported** for now (see [Known Issues](#known-issues)) | NVIDIA, AMD or Intel, with a Vulkan 1.2 driver |
 
 > [!WARNING]
 > If your CPU doesn't support AVX2, you must download the compatibility release (the file ending in
@@ -59,6 +57,11 @@ port's runtime are adapted.
 3) Put your disc image in that folder (file name can be anything).
 
 4) Start `AceCombat6.exe` for Windows, or `AceCombat6` for Linux.
+
+> [!WARNING]
+> Don't install the game in `Program Files`, or in a folder Windows Security's Controlled folder access protects
+> (such as Documents or Desktop). The game can't write there: it can't create your save data, and your settings
+> aren't kept. Use a folder you own, for example `C:\Games\GracemeriaRecomp`.
 
 > [!TIP]
 > To install downloadable content, place them extracted inside a `dlc` folder next to the game.
@@ -128,6 +131,8 @@ slower, but the log then names the draw where the graphics card fails. Reproduce
 `ac6_runtime.log`.
 
 - **Only the North American release** is supported.
+- **Intel GPUs on Windows:** the game crashes when the first mission or the tutorial starts. 
+Workaround: play the Linux release on Linux, where Intel GPUs work with Mesa's driver.
 - **Old AMD drivers (before 2022):** in the cockpit view, the canopy can show through the instrument panel. Turn
   Dynamic rendering off (Debug tab, Graphics driver).
 - **DualSense adaptive triggers on Linux** may need access to the controller's hidraw device (Steam's or
@@ -207,6 +212,7 @@ downloads it into `toolchain/sniper` (1.2 GB) and prints its path, then
   (FSR 3.1), [XeGTAO](https://github.com/GameTechDev/XeGTAO), [SMAA](https://github.com/iryoku/smaa),
   [RenoDX](https://github.com/clshortfuse/renodx) (HDR tone mappers), [o1heap](https://github.com/pavel-kirienko/o1heap),
   [xxHash](https://github.com/Cyan4973/xxHash) and the [Share Tech](https://fonts.google.com/specimen/Share+Tech) fonts
+- [Ostrich](https://ostrichmods.com/), the PlayStation button glyphs
 
 ## Licence
 
