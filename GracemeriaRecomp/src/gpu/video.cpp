@@ -334,6 +334,14 @@ bool Video::Init()
             "Update the graphics driver", VK_API_VERSION_MAJOR(v), VK_API_VERSION_MINOR(v));
         crash::Shutdown(1, reason.c_str());
     }
+    // The renderer's descriptor sets are bindless (large partly bound arrays indexed at run time). A driver without
+    // descriptor indexing can still offer Vulkan 1.2 or newer. The game stops with a message instead.
+    if (!device->getCapabilities().descriptorIndexing)
+    {
+        log::Error("{} lacks descriptor indexing (runtime descriptor arrays, partly bound and variable count bindings): "
+            "the game's renderer needs it", device->getDescription().name);
+        crash::Shutdown(1, "the graphics card doesn't support Vulkan descriptor indexing.");
+    }
     if (const auto* vk = dynamic_cast<const plume::VulkanDevice*>(device.get()))
         log::Info("Vulkan paths: {}, {}", vk->dynamicRenderingSupported ? "dynamic rendering" : "render passes",
             vk->pipelineLibrariesSupported ? "pipeline libraries" : "whole pipelines");

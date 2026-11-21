@@ -40,7 +40,7 @@ European and Japanese releases are **not supported**.
 |-|-|-|
 | **Operating system** | Windows 10 or 11, 64-bit | A modern 64-bit distro |
 | **CPU** | AVX2: Intel Haswell (4th generation Core, 2013) or newer, AMD Excavator (2015) or Ryzen<br>Older CPUs with SSE4.2: the compatibility build | AVX2: Intel Haswell (4th generation Core, 2013) or newer, AMD Excavator (2015) or Ryzen |
-| **GPU** | NVIDIA or AMD, with a Vulkan 1.2 driver<br>Intel GPUs are **not supported** for now (see [Known Issues](#known-issues)) | NVIDIA, AMD or Intel, with a Vulkan 1.2 driver |
+| **GPU** | NVIDIA or AMD, with a Vulkan 1.2 driver<br>Intel GPUs are **not supported** for now (see [Known Issues](#known-issues)) | NVIDIA, AMD or Intel, with a Vulkan 1.2 driver<br>Intel: 6th generation Core (Skylake, 2015) or newer |
 
 > [!WARNING]
 > If your CPU doesn't support AVX2, you must download the compatibility release (the file ending in
