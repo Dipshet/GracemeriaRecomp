@@ -227,8 +227,9 @@ bool s_updateHintDone = false;   // the update notice (DrawUpdateHint) shown out
 uint64_t s_reloadNoteAt = 0;     // SDL_GetTicks() of the last F5 (the texture reload's note, DrawReloadNote)
 std::string s_status;
 bool s_statusWarn = false;
-// The confirmation up, if any: Quit to desktop's, Restart now's.
-enum Confirm { kNoConfirm, kConfirmQuit, kConfirmRestart };
+// The confirmation up, if any: Quit to desktop's, Restart now's, and Apply's when it saved a change that needs a
+// restart (Restart now or Skip).
+enum Confirm { kNoConfirm, kConfirmQuit, kConfirmRestart, kConfirmApplied };
 Confirm s_confirm = kNoConfirm;
 // The HUD colour's picker: hue, saturation and value kept apart, so the hue survives a grey or black.
 bool s_picker = false;
@@ -2078,8 +2079,23 @@ void ConfirmPress(int button)
         return;
     if (confirm == kConfirmQuit)
         Quit();
-    else if (confirm == kConfirmRestart)
+    else if (confirm == kConfirmRestart || confirm == kConfirmApplied)
         Restart();
+}
+
+// Apply (the button, Ctrl+S, Y): the changes saved, then, if one of them takes effect only at the next start, the
+// prompt offering to restart now.
+void ApplyPressed()
+{
+    bool restart = false;
+    for (const Edit& e : s_edits)
+        if (Unsaved(e) && NeedsRestart(e))
+            restart = true;
+    if (SaveEdits() && restart)
+    {
+        s_confirm = kConfirmApplied;
+        s_confirmFocus = 1;   // Skip first: a restart loses unsaved progress
+    }
 }
 
 // The footer's buttons shown: Restart now only when a change needs it (one to a setting that isn't live).
@@ -2093,7 +2109,7 @@ void FooterPress(int button)
     if (button == kRevert)
         Revert();
     else if (button == kApply)
-        SaveEdits();
+        ApplyPressed();
     else if (button == kRestart && AnyRestart())
     {
         s_confirm = kConfirmRestart;   // asks first
@@ -2314,7 +2330,7 @@ void HandleKeys()
         return;
     }
     if (Pressed({ ImGuiKey_GamepadFaceUp }) || (io.KeyCtrl && Pressed({ ImGuiKey_S })))
-        SaveEdits();
+        ApplyPressed();
 
     // Moving: WASD or the arrows. S isn't down with Ctrl (Ctrl+S applies).
     const bool up = Pressed({ ImGuiKey_UpArrow, ImGuiKey_W, ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp }, true);
@@ -3327,9 +3343,12 @@ void DrawFooter(ImDrawList* dl)
 void DrawConfirm(ImDrawList* dl, ImVec2 size)
 {
     dl->AddRectFilled(ImVec2(0, 0), size, Rgb(0x04051A, 0.72f));
-    const bool restart = s_confirm == kConfirmRestart;
+    const bool restart = s_confirm == kConfirmRestart, applied = s_confirm == kConfirmApplied;
     std::string text;
-    if (restart)
+    if (applied)
+        text = "Some of the settings you applied take effect only after a restart. Restart the game now? Progress since "
+               "the game last saved is lost.";
+    else if (restart)
         text = "Restart the game now? Your changes are applied first, then the game starts again with them. Progress "
                "since the game last saved is lost.";
     else
@@ -3343,9 +3362,9 @@ void DrawConfirm(ImDrawList* dl, ImVec2 size)
     const float h = std::max(270.0f * u, 52.0f * u + textH + 24.0f * u + 64.0f * u);
     const ImVec2 a(o.x + 660.0f * u, o.y + 515.0f * u - h / 2), b(a.x + width, a.y + h);
     dl->AddRectFilled(a, b, Rgb(0x0B1140));   // opaque: the list mustn't show through
-    Panel(dl, a, b, restart ? "RESTART NOW" : "QUIT TO DESKTOP");
+    Panel(dl, a, b, applied ? "RESTART REQUIRED" : restart ? "RESTART NOW" : "QUIT TO DESKTOP");
     Paragraph(dl, ImVec2(a.x + 22.0f * u, a.y + 52.0f * u), width - 44.0f * u, 18.0f * ut, Rgb(0xC9D0EA), text);
-    const char* labels[] = { "CONFIRM", "CANCEL" };
+    const char* const labels[] = { applied ? "RESTART NOW" : "CONFIRM", applied ? "SKIP" : "CANCEL" };
     float bx = b.x - 22.0f * u - ButtonWidth(labels[0]) - 12.0f * u - ButtonWidth(labels[1]);
     for (int i = 0; i < 2; i++)
     {
