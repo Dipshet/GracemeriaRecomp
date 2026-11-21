@@ -6110,12 +6110,12 @@ bool InitRenderer()
         log::Info("Late pass: {}", s_r.lateBoundsGs ? "the draws' rectangles only" : "the whole target (no capture shader)");
     }
     else if (LateRectWanted())
-        log::Info("Late pass: the whole target ({})", !device.getCapabilities().geometryShader ? "no geometry shaders" : "AC6_UNIFORM_CONSTANTS=0");
+        log::Info("Late pass: the whole target ({})", !device.getCapabilities().geometryShader ? "no geometry shaders" : "the shader constants read through buffer addresses");
     // Volumetric smoke: geometry shaders (writing buffers) and the constants as uniform buffers.
     if (VolumetricsMode())
     {
         if (!device.getCapabilities().geometryShader || !UniformConstants())
-            log::Warn("Volumetric smoke off: {}", !device.getCapabilities().geometryShader ? "no geometry shaders" : "AC6_UNIFORM_CONSTANTS=0");
+            log::Warn("Volumetric smoke off: {}", !device.getCapabilities().geometryShader ? "no geometry shaders" : "the shader constants read through buffer addresses");
         else
         {
             s_r.volHarvestGs = InternalShader("volHarvestGs");

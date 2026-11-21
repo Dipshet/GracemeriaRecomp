@@ -1321,12 +1321,38 @@ void NoteVertexShaderPatchedInPlace(uint32_t object, uint32_t variant)
     s_stateEpoch.fetch_add(1, std::memory_order_release);
 }
 
-// AC6_UNIFORM_CONSTANTS=0: the SPIR-V backend's constants through buffer addresses (push
-// constants) instead of uniform buffers.
+// The SPIR-V backend's constants through uniform buffers (faster), else through buffer addresses (push constants). 
+// Not on Intel GPUs on Windows: Intel's Windows driver reads the uniform buffers wrongly here
+// (flickers, GPU hung on the first alpha-tested draws, a lost device; with the constants read through
+// their addresses, everything runs). Linux's driver for them (Mesa) reads them  right. 
+// AC6_UNIFORM_CONSTANTS=0 / 1 forces either way.
 bool UniformConstants()
 {
-    static const bool enabled = [] { const char* v = std::getenv("AC6_UNIFORM_CONSTANTS"); return !(v && *v == '0') && !HlslBackend(); }();
-    return enabled;
+    static std::atomic<int> decided{ -1 };
+    if (const int d = decided.load(std::memory_order_acquire); d >= 0)
+        return d != 0;
+    if (HlslBackend())
+    {
+        decided.store(0, std::memory_order_release);
+        return false;
+    }
+    const char* v = std::getenv("AC6_UNIFORM_CONSTANTS");
+    if (v && (*v == '0' || *v == '1'))
+    {
+        decided.store(*v == '1' ? 1 : 0, std::memory_order_release);
+        return *v == '1';
+    }
+    if (!g_video.device)
+        return true;   // (asked before the device is made: not decided yet)
+#if defined(_WIN32)
+    const bool intel = g_video.device->getDescription().vendor == plume::RenderDeviceVendor::INTEL;
+#else
+    const bool intel = false;
+#endif
+    if (intel)
+        log::Info("Shader constants: through buffer addresses (an Intel GPU: its Windows driver misreads them as uniform buffers)");
+    decided.store(intel ? 0 : 1, std::memory_order_release);
+    return !intel;
 }
 
 bool EdramSwizzle()
