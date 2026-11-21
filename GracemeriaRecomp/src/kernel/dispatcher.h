@@ -56,6 +56,8 @@ uint32_t CurrentKThread();
 
 // Diagnostics: logs every blocked wait and the state of the objects involved (thread dump).
 void DumpWaits();
+// How many threads wait on that object now.
+size_t WaiterCount(uint32_t header);
 
 // Host clock for absolute timeouts: current system time in 100 ns units since 1601 (FILETIME).
 uint64_t SystemTime100ns();

@@ -13,6 +13,9 @@ enum class Level { Trace, Info, Warn, Error };
 void Init(const std::filesystem::path& path);
 const std::filesystem::path& Directory();   // folder of the log file (for diagnostic dumps)
 void Write(Level level, std::string_view message);
+// The log file's lines so far onto the disk itself, not only the system's cache: for what must survive the machine
+// stopping (a GPU hang the driver can't recover from freezes it).
+void FlushToDisk();
 double Seconds(); // since start
 uint32_t ThreadId();
 

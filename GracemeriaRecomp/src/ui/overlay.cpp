@@ -246,10 +246,12 @@ char s_text[512] = {};
 bool s_gamepad = false;      // the controller was used last: its prompts
 bool s_hintDone = false;     // the start-up hint (DrawStartupHint) shown out, or the overlay opened
 bool s_updateHintDone = false;   // the update notice (DrawUpdateHint) shown out, or the overlay opened
+uint64_t s_reloadNoteAt = 0;     // SDL_GetTicks() of the last F5 (the texture reload's note, DrawReloadNote)
 std::string s_status;
 bool s_statusWarn = false;
-// The confirmation up, if any: Quit to desktop's, Restart now's.
-enum Confirm { kNoConfirm, kConfirmQuit, kConfirmRestart };
+// The confirmation up, if any: Quit to desktop's, Restart now's, and Apply's when it saved a change that needs a
+// restart (Restart now or Skip).
+enum Confirm { kNoConfirm, kConfirmQuit, kConfirmRestart, kConfirmApplied };
 Confirm s_confirm = kNoConfirm;
 // The HUD colour's picker: hue, saturation and value kept apart, so the hue survives a grey or black.
 bool s_picker = false;
@@ -2106,8 +2108,23 @@ void ConfirmPress(int button)
         return;
     if (confirm == kConfirmQuit)
         Quit();
-    else if (confirm == kConfirmRestart)
+    else if (confirm == kConfirmRestart || confirm == kConfirmApplied)
         Restart();
+}
+
+// Apply (the button, Ctrl+S, Y): the changes saved, then, if one of them takes effect only at the next start, the
+// prompt offering to restart now.
+void ApplyPressed()
+{
+    bool restart = false;
+    for (const Edit& e : s_edits)
+        if (Unsaved(e) && NeedsRestart(e))
+            restart = true;
+    if (SaveEdits() && restart)
+    {
+        s_confirm = kConfirmApplied;
+        s_confirmFocus = 1;   // Skip first: a restart loses unsaved progress
+    }
 }
 
 // The footer's buttons shown: Restart now only when a change needs it (one to a setting that isn't live).
@@ -2121,7 +2138,7 @@ void FooterPress(int button)
     if (button == kRevert)
         Revert();
     else if (button == kApply)
-        SaveEdits();
+        ApplyPressed();
     else if (button == kRestart && AnyRestart())
     {
         s_confirm = kConfirmRestart;   // asks first
@@ -2323,6 +2340,14 @@ void HandleKeys()
         }
     }
 
+    // On the Textures row R / Y refresh the browser, as its REFRESH prompt shows, before Enter has gone into the grid too.
+    if (s_footer < 0 && !s_rows.empty() && s_rows[size_t(s_cursor)].edit == kTexturesRow && Pressed({ ImGuiKey_R, ImGuiKey_GamepadFaceUp }))
+    {
+        RefreshTextures();
+        Status(std::format("Textures refreshed: {} in the last frame.", BrowserTextures().size()));
+        return;
+    }
+
     // Tabs: Q / E (PgUp / PgDn, Ctrl+(Shift+)Tab too), the controller's LT / RT.
     if (Pressed({ ImGuiKey_GamepadL2, ImGuiKey_PageUp, ImGuiKey_Q }) || (io.KeyCtrl && io.KeyShift && Pressed({ ImGuiKey_Tab })))
         SwitchTab(s_tab - 1);
@@ -2334,7 +2359,7 @@ void HandleKeys()
         return;
     }
     if (Pressed({ ImGuiKey_GamepadFaceUp }) || (io.KeyCtrl && Pressed({ ImGuiKey_S })))
-        SaveEdits();
+        ApplyPressed();
 
     // Moving: WASD or the arrows. S isn't down with Ctrl (Ctrl+S applies).
     const bool up = Pressed({ ImGuiKey_UpArrow, ImGuiKey_W, ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp }, true);
@@ -2980,7 +3005,7 @@ void DrawTextureBrowser(ImDrawList* dl, ImVec2 a, ImVec2 b)
     y += 26.0f * u;
     const std::string help = s_browsing
         ? std::format("Enter / {}: dump it to dump/textures/<hash>.dds next to the game\n"
-                      "A replacement goes in mods/<mod>/textures/<hash>.dds (any resolution, BC1-5 or 8-bit RGBA)", ButtonName("A"))
+                      "A replacement goes in mods/<mod>/textures/<hash>.dds (any resolution, BC1-5, BC7 or 8-bit RGBA)", ButtonName("A"))
         : std::format("Enter / {}: browse the {} textures of the frame the settings opened on (R / {}: refresh)\n"
                       "Dump textures (above) saves every texture the game uses", ButtonName("A"), list.size(), ButtonName("Y"));
     y += Paragraph(dl, ImVec2(a.x + pad, y), b.x - a.x - 2 * pad, 14.0f * ut, Rgb(0x9FB0E6), help) + 12.0f * u;
@@ -3377,9 +3402,12 @@ void DrawFooter(ImDrawList* dl)
 void DrawConfirm(ImDrawList* dl, ImVec2 size)
 {
     dl->AddRectFilled(ImVec2(0, 0), size, Rgb(0x04051A, 0.72f));
-    const bool restart = s_confirm == kConfirmRestart;
+    const bool restart = s_confirm == kConfirmRestart, applied = s_confirm == kConfirmApplied;
     std::string text;
-    if (restart)
+    if (applied)
+        text = "Some of the settings you applied take effect only after a restart. Restart the game now? Progress since "
+               "the game last saved is lost.";
+    else if (restart)
         text = "Restart the game now? Your changes are applied first, then the game starts again with them. Progress "
                "since the game last saved is lost.";
     else
@@ -3393,9 +3421,9 @@ void DrawConfirm(ImDrawList* dl, ImVec2 size)
     const float h = std::max(270.0f * u, 52.0f * u + textH + 24.0f * u + 64.0f * u);
     const ImVec2 a(o.x + 660.0f * u, o.y + 515.0f * u - h / 2), b(a.x + width, a.y + h);
     dl->AddRectFilled(a, b, Rgb(0x0B1140));   // opaque: the list mustn't show through
-    Panel(dl, a, b, restart ? "RESTART NOW" : "QUIT TO DESKTOP");
+    Panel(dl, a, b, applied ? "RESTART REQUIRED" : restart ? "RESTART NOW" : "QUIT TO DESKTOP");
     Paragraph(dl, ImVec2(a.x + 22.0f * u, a.y + 52.0f * u), width - 44.0f * u, 18.0f * ut, Rgb(0xC9D0EA), text);
-    const char* labels[] = { "CONFIRM", "CANCEL" };
+    const char* const labels[] = { applied ? "RESTART NOW" : "CONFIRM", applied ? "SKIP" : "CANCEL" };
     float bx = b.x - 22.0f * u - ButtonWidth(labels[0]) - 12.0f * u - ButtonWidth(labels[1]);
     for (int i = 0; i < 2; i++)
     {
@@ -3966,6 +3994,37 @@ void DrawUpdateHint(ImDrawList* dl, ImVec2 pos, ImVec2 size, float alpha)
     Text(dl, s_body, textSize, ImVec2(a.x + pad, a.y + pad), Rgb(0xE4E9FA, alpha), text, 0.06f);
 }
 
+// F5's note (the texture replacements read again): 2 s, fading over the last half, where the start-up hint is.
+float ReloadNoteAlpha()
+{
+    if (!s_reloadNoteAt)
+        return 0.0f;
+    const double t = (SDL_GetTicks() - s_reloadNoteAt) / 1000.0;
+    if (t >= 2.0)
+    {
+        s_reloadNoteAt = 0;
+        return 0.0f;
+    }
+    return float(std::min(1.0, (2.0 - t) * 2.0));
+}
+
+std::string ReloadNoteText()
+{
+    if (!gpu::mods::ReplaceOn())
+        return "TEXTURE REPLACEMENTS ARE OFF (THE DEBUG TAB)";
+    return std::format("TEXTURE REPLACEMENTS RELOADED: {}", gpu::mods::ReplacementCount());
+}
+
+void DrawReloadNote(ImDrawList* dl, ImVec2 pos, ImVec2 size, float alpha)
+{
+    const float scale = std::min(size.x / 1920.0f, size.y / 1080.0f), textSize = 24.0f * scale, pad = 10.0f * scale;
+    const std::string text = ReloadNoteText();
+    const float w = TextWidth(s_body, textSize, text, 0.06f), h = textSize + 2.0f * pad;
+    const ImVec2 a(pos.x + (size.x - w) * 0.5f - pad, pos.y + size.y - 24.0f * scale - h), b(a.x + w + 2.0f * pad, a.y + h);
+    dl->AddRectFilled(a, b, Rgb(0x04051A, 0.7f * alpha));
+    Text(dl, s_body, textSize, ImVec2(a.x + pad, a.y + pad), Rgb(0xE4E9FA, alpha), text, 0.06f);
+}
+
 void DrawFpsCounter(ImDrawList* dl, ImVec2 pos, ImVec2 size)
 {
     using Clock = std::chrono::steady_clock;
@@ -4212,6 +4271,17 @@ bool HandleEvent(const SDL_Event& event)
         SetOpen(!s_open.load());
         return true;
     }
+    // F5: the texture replacements read again from their files. Open or closed: a note over the game, 
+    // or the overlay's status line.
+    if (event.type == SDL_EVENT_KEY_DOWN && event.key.scancode == SDL_SCANCODE_F5 && !event.key.repeat)
+    {
+        gpu::mods::RequestReload();
+        if (s_open.load())
+            Status(gpu::mods::ReplaceOn() ? "Texture replacements reloaded from their files." : "Texture replacements are off (Debug tab).");
+        else
+            s_reloadNoteAt = std::max<uint64_t>(SDL_GetTicks(), 1);
+        return true;
+    }
     // Both stick clicks together on a controller, LS + RS (L3 + R3): input::Update keeps them from the game (a click alone
     // reaches it a moment later). Not Back + Start: Start also opens the game's pause menu.
     if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
@@ -4313,8 +4383,8 @@ void Frame()
     {
         // (The FPS counter and the start-up hint alone, without the backend's new frame: it would read the gamepads for
         // the overlay's keys and show the mouse cursor during play.)
-        const float hint = HintAlpha(), updateHint = UpdateHintAlpha();
-        if (FpsCounterOn() || hint > 0.0f || updateHint > 0.0f || mods::WantsDraw())
+        const float hint = HintAlpha(), updateHint = UpdateHintAlpha(), reloadNote = ReloadNoteAlpha();
+        if (FpsCounterOn() || hint > 0.0f || updateHint > 0.0f || reloadNote > 0.0f || mods::WantsDraw())
             if (SDL_Window* window = Window())
             {
                 int w = 0, h = 0, pw = 0, ph = 0;
@@ -4331,7 +4401,9 @@ void Frame()
                     const ImGuiViewport* vp = ImGui::GetMainViewport();
                     if (FpsCounterOn())
                         DrawFpsCounter(ImGui::GetForegroundDrawList(), vp->Pos, vp->Size);
-                    if (hint > 0.0f)
+                    if (reloadNote > 0.0f)
+                        DrawReloadNote(ImGui::GetForegroundDrawList(), vp->Pos, vp->Size, reloadNote);
+                    else if (hint > 0.0f)
                         DrawStartupHint(ImGui::GetForegroundDrawList(), vp->Pos, vp->Size, hint);
                     else if (updateHint > 0.0f)
                         DrawUpdateHint(ImGui::GetForegroundDrawList(), vp->Pos, vp->Size, updateHint);

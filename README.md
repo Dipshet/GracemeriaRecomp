@@ -33,16 +33,14 @@ port's runtime are adapted.
 
 ## System Requirements
 
-- **Game:** Ace Combat 6: Fires of Liberation, the North American release (4E4D07D1), as a disc image (`.iso`)
-  - The European and Japanese releases are **not supported**
-- **CPU** with AVX2 for Windows and Linux:
-  - Intel: Haswell (4th generation Core, 2013) or newer
-  - AMD: Excavator (2015) or Ryzen
-- **Older CPUs** without AVX2, with SSE4.2: the compatibility build, a download of its own (Windows only)
-- **GPU** with a Vulkan 1.2 driver
-- **Operating system:**
-  - Windows 10 or 11, 64-bit
-  - A modern 64-bit Linux distro
+**Game:** Ace Combat 6: Fires of Liberation, the North American release (4E4D07D1), as a disc image (`.iso`). The
+European and Japanese releases are **not supported**.
+
+| | Windows | Linux |
+|-|-|-|
+| **Operating system** | Windows 10 or 11, 64-bit | A modern 64-bit distro |
+| **CPU** | AVX2: Intel Haswell (4th generation Core, 2013) or newer, AMD Excavator (2015) or Ryzen<br>Older CPUs with SSE4.2: the compatibility build | AVX2: Intel Haswell (4th generation Core, 2013) or newer, AMD Excavator (2015) or Ryzen |
+| **GPU** | NVIDIA or AMD, with a Vulkan 1.2 driver<br>Intel GPUs are **not supported** for now (see [Known Issues](#known-issues)) | NVIDIA, AMD or Intel, with a Vulkan 1.2 driver |
 
 > [!WARNING]
 > If your CPU doesn't support AVX2, you must download the compatibility release (the file ending in
@@ -59,6 +57,11 @@ port's runtime are adapted.
 3) Put your disc image in that folder (file name can be anything).
 
 4) Start `AceCombat6.exe` for Windows, or `AceCombat6` for Linux.
+
+> [!WARNING]
+> Don't install the game in `Program Files`, or in a folder Windows Security's Controlled folder access protects
+> (such as Documents or Desktop). The game can't write there: it can't create your save data, and your settings
+> aren't kept. Use a folder you own, for example `C:\Games\GracemeriaRecomp`.
 
 > [!TIP]
 > To install downloadable content, place them extracted inside a `dlc` folder next to the game.
@@ -114,6 +117,7 @@ The **mouse** steers the aircraft. Hold `Left Alt` to look around with the mouse
 | Key | Action |
 |-|-|
 | F4 | Settings overlay (also **LS + RS** on a controller) |
+| F5 | Reload the texture replacements from their files |
 | F11 | (Debug) Save the last few seconds as pictures |
 | F12 | (Debug) Save a replayable capture of the last few seconds |
 
@@ -121,9 +125,16 @@ The **mouse** steers the aircraft. Hold `Left Alt` to look around with the mouse
 
 Before reporting a problem, check the [issues](https://github.com/Dipshet/GracemeriaRecomp/issues) and the [Discord](https://discord.gg/9yjxBkHmZT) server. When reporting an issue, attach `ac6_runtime.log` from the game's folder and how to replicate it.
 
+**Crashes, freezes or wrong drawing with your graphics driver:** the settings overlay's (F4) Debug tab, under Graphics
+driver, has Pipeline libraries and Dynamic rendering to turn off (try them one at a time), and GPU debug mode: much
+slower, but the log then names the draw where the graphics card fails. Reproduce the problem with it on and attach
+`ac6_runtime.log`.
+
 - **Only the North American release** is supported.
-- **Old AMD drivers (before 2022):** in the cockpit view, the canopy can show through the instrument panel. Add
-  `AC6_DYNAMIC_RENDERING = "0"` to the `[env]` section of `ac6_settings.toml`.
+- **Intel GPUs on Windows:** the game crashes when the first mission or the tutorial starts. 
+Workaround: play the Linux release on Linux, where Intel GPUs work with Mesa's driver.
+- **Old AMD drivers (before 2022):** in the cockpit view, the canopy can show through the instrument panel. Turn
+  Dynamic rendering off (Debug tab, Graphics driver).
 - **DualSense adaptive triggers on Linux** may need access to the controller's hidraw device (Steam's or
   game-devices-udev's udev rules).
 - **Online play** is not available, yet.
@@ -204,6 +215,7 @@ downloads it into `toolchain/sniper` (1.2 GB) and prints its path, then
   [RenoDX](https://github.com/clshortfuse/renodx) (HDR tone mappers), [LuaJIT](https://luajit.org) (Lua mods),
   [o1heap](https://github.com/pavel-kirienko/o1heap),
   [xxHash](https://github.com/Cyan4973/xxHash) and the [Share Tech](https://fonts.google.com/specimen/Share+Tech) fonts
+- [Ostrich](https://ostrichmods.com/), the PlayStation button glyphs
 
 ## Licence
 

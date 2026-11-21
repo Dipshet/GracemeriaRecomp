@@ -129,10 +129,10 @@ void Store(uint32_t guest, const Context& c)
 void LogContext(const char* what, uint32_t index, const Context& c)
 {
     log::Info("XMA {} ctx {}: in0 {:08X} x{} {} in1 {:08X} x{} {} cur {} read {} | out {:08X} blocks {} w{} r{} valid {} | {} Hz x{} "
-              "subframes {} | loop {}..{} x{}",
+              "subframes {} | loop {}..{} x{} end {} skip {}",
         what, index, c.w[5], c.PacketCount(0), int(c.InputValid(0)), c.w[6], c.PacketCount(1), int(c.InputValid(1)), c.CurrentBuffer(),
         c.ReadOffset(), c.w[7], c.BlockCount(), c.WriteOffset(), c.OutputReadOffset(), int(c.OutputValid()), c.SampleRate(), c.Channels(),
-        Bits(c.w[1], 20, 4), Bits(c.w[3], 0, 26), Bits(c.w[4], 0, 26), Bits(c.w[0], 12, 8));
+        Bits(c.w[1], 20, 4), Bits(c.w[3], 0, 26), Bits(c.w[4], 0, 26), Bits(c.w[0], 12, 8), c.LoopSubframeEnd(), c.LoopSubframeSkip());
 }
 
 // FFmpeg's messages (warnings and errors) go to the log, a limited number of them.
@@ -316,9 +316,12 @@ struct Decoder
         constexpr int kSubframe = 128;
         int from = std::min(n, int(skipSubframes) * kSubframe), to = n;
         skipSubframes = 0;
-        // A loop needs a real window (start before end). The engine leaves count 255 with both at 0 on
-        // sounds it repeats itself, which must not loop at the stream's first frame.
-        const bool loopEnd = c.LoopCount() > 0 && c.LoopStart() < c.LoopEnd() && at.offset == c.LoopEnd();
+        // A loop needs a window: the engine leaves count 255 with both at 0 on sounds it repeats itself, which
+        // must not loop at the stream's first frame. The start may come after the end: the streamed BGM puts the
+        // song's end and then its loop start in one buffer and loops forward from one to the other (the menu's:
+        // 397871 -> 486476, 3 subframes skipped). Taken as no loop, the bridge between them played too, a stutter
+        // at every loop of the music.
+        const bool loopEnd = c.LoopCount() > 0 && c.LoopStart() != c.LoopEnd() && at.offset == c.LoopEnd();
         if (loopEnd)
             to = std::min(n, int(c.LoopSubframeEnd() + 1) * kSubframe);
         if (to > from)
@@ -330,6 +333,9 @@ struct Decoder
         }
         if (!loopEnd)
             return false;
+        if (LogEnabled())
+            log::Info("XMA loop: buffer {} offset {} -> {} (skip {} subframes, count {})", at.buffer, at.offset, c.LoopStart(),
+                c.LoopSubframeSkip(), c.LoopCount());
         if (c.LoopCount() != 255)
             c.SetLoopCount(c.LoopCount() - 1);
         avcodec_flush_buffers(codec);

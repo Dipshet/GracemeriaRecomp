@@ -2,6 +2,7 @@
 #include "game/cockpit.h"
 #include "game/draw_distance.h"
 #include "game/ui_layers.h"
+#include "gpu/breadcrumbs.h"
 #include "gpu/capture.h"
 #include "gpu/deferred_commands.h"
 #include "gpu/fsr.h"
@@ -335,6 +336,7 @@ struct Renderer
     // (render surfaces, resolve targets), and the guest frame's host size (the target above).
     float resX = 1.0f, resY = 1.0f;   // host pixels per guest pixel on each axis
     RenderFramebuffer* markedFramebuffer = nullptr;   // AC6_GPU_PASSES: the draws' pass last marked
+    RenderFramebuffer* crumbFramebuffer = nullptr;    // the draws' target of the last breadcrumb (gpu/breadcrumbs.h)
     uint32_t targetWidth = kGuestWidth, targetHeight = kGuestHeight;
     // Descriptors of rendered images: the scale they were rendered at (0: not rendered).
     std::vector<std::array<float, 2>> scaledDescriptors = std::vector<std::array<float, 2>>(kTextureDescriptors);
@@ -430,6 +432,8 @@ struct Renderer
     float worldResX = 1.0f, worldResY = 1.0f;
     uint32_t worldColorSurface = 0, worldDepthSurface = 0;
     uint64_t worldFrame = ~0ull;
+    // The frame the scene image's post steps (ambient occlusion to FSR) last ran in: once a frame.
+    uint64_t scenePostFrame = ~0ull;
     HostImage fsrColor;
     float worldMipBias = 0.0f;
     const HostImage* taaSurface = nullptr;
@@ -814,6 +818,25 @@ uint64_t SeedFrame()
     return s_r.frame + s_frameSeedBase.load(std::memory_order_relaxed);
 }
 
+// AC6_GPU_FAULT_TEST=<frame>: a test of the device-lost report (gpu/breadcrumbs.h). From that frame the GPU reads through
+// an unmapped address (0x1000), so it faults and the device is lost: in a draw of its own at the end of each frame
+// (whatever the output path), and where it reads guest vertices at computed indices.
+bool FaultTestDue()
+{
+    static const uint64_t faultFrame = [] { const char* v = std::getenv("AC6_GPU_FAULT_TEST"); return v && *v ? std::strtoull(v, nullptr, 10) : UINT64_MAX; }();
+    if (s_r.frame < faultFrame)
+        return false;
+    static bool logged = false;
+    if (!std::exchange(logged, true))
+        log::Warn("AC6_GPU_FAULT_TEST: the GPU reads an unmapped address from frame {} (a test crash)", s_r.frame);
+    return true;
+}
+
+uint64_t FaultTestAddress(uint64_t address)
+{
+    return FaultTestDue() ? 0x1000 : address;
+}
+
 // AC6_GPU_PASSES: an image in a pass label, "3840x2160 f24 x2" (size, RenderFormat, samples).
 std::string PassImage(const HostImage* image)
 {
@@ -822,10 +845,14 @@ std::string PassImage(const HostImage* image)
     return std::format("{}x{} f{}{}", image->width, image->height, int(image->format), image->samples > 1 ? std::format(" x{}", image->samples) : "");
 }
 
-// Starts a timed pass (AC6_GPU_PASSES). The draws' passes start where their framebuffer changes.
+// Starts a pass: a GPU crash breadcrumb at the caller's place (gpu/breadcrumbs.h), and with AC6_GPU_PASSES a timed pass
+// (the label is made only then). The draws' passes start where their framebuffer changes.
 template <class Label>
-void MarkPass(Label&& label)
+void MarkPass(Label&& label, std::source_location where = std::source_location::current())
 {
+    if (g_video.Ready())
+        breadcrumbs::Mark(g_video.Commands(), s_r.frame, 0, 0, where);
+    s_r.crumbFramebuffer = nullptr;
     if (!g_video.GpuPassTiming())
         return;
     g_video.MarkGpuPass(label());
@@ -2337,7 +2364,7 @@ uint32_t ReplaceTexture(RenderCommandList& cl, HostTexture& t, const xenos::Text
         mods::MakeMips(image, uint32_t(std::bit_width(std::max(image.width, image.height))));
     const RenderFormat format = RenderFormat(image.format);
     const bool block = format == RenderFormat::BC1_UNORM || format == RenderFormat::BC2_UNORM || format == RenderFormat::BC3_UNORM ||
-        format == RenderFormat::BC4_UNORM || format == RenderFormat::BC5_UNORM;
+        format == RenderFormat::BC4_UNORM || format == RenderFormat::BC5_UNORM || format == RenderFormat::BC7_UNORM;
     const uint32_t bw = block ? 4 : 1;
     const uint32_t bytesPerBlock = format == RenderFormat::BC1_UNORM || format == RenderFormat::BC4_UNORM ? 8 : block ? 16
         : format == RenderFormat::R8_UNORM ? 1 : 4;
@@ -2665,8 +2692,9 @@ uint32_t GetTextureImpl(RenderCommandList& cl, const xenos::TextureFetch& fetch)
         t.watchGeneration = 0;
     }
     t.unchangedChecks = 0;
-    // A mod's replacement for this content (gpu/texture_mods.h): its image instead of the upload.
-    if (!cube && mods::ReplaceOn())
+    // A mod's replacement for this content (gpu/texture_mods.h): its image instead of the upload. (The index has the
+    // mods only with replacements on, the language pack's and the button glyphs either way.)
+    if (!cube)
         if (const auto path = mods::FindReplacement(hash))
             if (const uint32_t descriptor = ReplaceTexture(cl, t, fetch, hostFormat, *path, hash, mips.size() > 0))
             {
@@ -3079,6 +3107,21 @@ void EnsureImage(HostImage& image, uint32_t width, uint32_t height, RenderFormat
     image.depth = depth;
     image.fresh = true;
     image.layout = RenderTextureLayout::UNKNOWN;
+}
+
+// The R8 image beside a depth resolve that holds its stencil (read as the resolve's 8_8_8_8 texels: the cockpit's
+// depth that the effects pass and the motion blur rebuild from it). Made and scaled as the depth resolve is: with FSR
+// upscaling the scene's resolves are at the render scale, into images of exactly that size. Kept at the frame's size,
+// the render-size stencil went into its top-left corner and was read across the whole image: the cockpit drawn small in
+// the corner of the effects pass's depth, the clouds cut along that shape.
+void EnsureResolvedStencil(HostImage& image, uint32_t width, uint32_t height, bool worldResolve, bool nativeResolve)
+{
+    EnsureImage(image, width, height, RenderFormat::R8_UNORM, false, 1, false, worldResolve);
+    if (s_r.upscaling || nativeResolve)
+    {
+        image.resX = s_r.resX;   // the scale its contents are at (sampled at it)
+        image.resY = s_r.resY;
+    }
 }
 
 // The mip chain of resolve target `image`, (re)made for a width x height texture of
@@ -4243,6 +4286,12 @@ bool BindTargets(RenderCommandList& cl, uint32_t device, Targets& t, uint32_t di
         t.motion = &s_r.motion;
     }
     RenderFramebuffer* framebuffer = t.motion ? GetMotionFramebuffer(t.color, t.depth) : GetFramebuffer(t.color, t.depth);
+    if (framebuffer != s_r.crumbFramebuffer)
+    {
+        const HostImage* target = t.color ? t.color : t.depth;
+        breadcrumbs::Mark(cl, s_r.frame, target ? target->width : 0, target ? target->height : 0);
+        s_r.crumbFramebuffer = framebuffer;
+    }
     if (g_video.GpuPassTiming() && framebuffer != s_r.markedFramebuffer)
     {
         g_video.MarkGpuPass(std::format("draw {} + {}", PassImage(t.color), PassImage(t.depth)));
@@ -5781,6 +5830,7 @@ bool InitRenderer()
     if (!g_video.Ready())
         return false;
     RenderDevice& device = *g_video.device;
+    breadcrumbs::Init(device);
 
     // Layout: sets 0-2 = the bindless texture heap (2D/3D/cube views of one set), set 3 = samplers, set 4 = the
     // constants as uniform buffers (SPIR-V backend), 28 bytes of push constants (VS/PS/shared constant addresses, as
@@ -5841,6 +5891,15 @@ bool InitRenderer()
     s_r.samplers[1] = device.createSampler(RenderSamplerDesc());
     s_r.samplerSet->setSampler(0, s_r.samplers[0].get());
     s_r.samplerSet->setSampler(1, s_r.samplers[1].get());
+    // The last slot: point, clamped (SMAA, the enhanced bloom's exposure, the planar glow, the lens effects, the motion
+    // blur). Made here whatever the anti-aliasing: a sampler slot never written is undefined to sample through.
+    {
+        RenderSamplerDesc pointDesc;
+        pointDesc.minFilter = pointDesc.magFilter = RenderFilter::NEAREST;
+        pointDesc.addressU = pointDesc.addressV = pointDesc.addressW = RenderTextureAddressMode::CLAMP;
+        s_r.pointSampler = device.createSampler(pointDesc);
+        s_r.samplerSet->setSampler(kSamplerDescriptors - 1, s_r.pointSampler.get());
+    }
 
     s_r.upload.size = 128ull << 20;
     s_r.upload.buffer = CreateUploadBuffer(s_r.upload.size * Video::kFramesInFlight,
@@ -6113,11 +6172,6 @@ bool InitRenderer()
             s_r.smaaBlendPipeline = device.createGraphicsPipeline(smaaDesc);
             smaaDesc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
             s_r.smaaBlendPipelineFloat = device.createGraphicsPipeline(smaaDesc);
-            RenderSamplerDesc pointDesc;
-            pointDesc.minFilter = pointDesc.magFilter = RenderFilter::NEAREST;
-            pointDesc.addressU = pointDesc.addressV = pointDesc.addressW = RenderTextureAddressMode::CLAMP;
-            s_r.pointSampler = device.createSampler(pointDesc);
-            s_r.samplerSet->setSampler(kSamplerDescriptors - 1, s_r.pointSampler.get());
             log::Info("SMAA {}(high preset)", (LiveAa() & 1) ? "on the scene image " : "ready ");
         }
         else
@@ -7914,6 +7968,54 @@ bool BeginUiImage(RenderCommandList& cl, HostImage& frame)
     return true;
 }
 
+// AC6_GPU_BREADCRUMBS=sync: whether `bytes` from GPU address `address` lie in memory a computed-index fetch may read this
+// frame: the upload ring's part for this frame, or a kept stream's buffer for this frame's slot.
+bool StreamRangeLive(uint64_t address, uint64_t bytes)
+{
+    const UploadRing& u = s_r.upload;
+    const uint64_t ringStart = u.deviceAddress + u.base;
+    if (address >= ringStart && address + bytes <= ringStart + u.size)
+        return true;
+    const uint32_t slot = g_video.slot;
+    for (const auto& [end, p] : s_r.persistentStreams)
+        if (p.buffers[slot] && address >= p.address[slot] && address + bytes <= p.address[slot] + (p.end - p.start))
+            return true;
+    return false;
+}
+
+// AC6_GPU_BREADCRUMBS=sync: a draw's description for its breadcrumb, and an error at once for a computed-index stream outside
+// the memory it may read (a GPU fault waiting to happen: robust buffer access doesn't cover raw addresses).
+std::string DescribeDrawForBreadcrumb(const SharedConstants& sc, const HostShader& vs, const HostShader* ps, const Targets& targets,
+    uint32_t primType, uint32_t firstVertex, uint32_t vertexCount, uint32_t indexCount)
+{
+    std::string d = std::format("primitive {}, first vertex {}, {} vertices, {} indices", primType, firstVertex, vertexCount, indexCount);
+    if (targets.color)
+        d += std::format(", colour {}x{} f{} x{}", targets.color->width, targets.color->height, int(targets.color->format), targets.color->samples);
+    if (targets.depth)
+        d += std::format(", depth {}x{} f{} x{}", targets.depth->width, targets.depth->height, int(targets.depth->format), targets.depth->samples);
+    for (uint32_t s = 0; s < 16; s++)
+    {
+        if (!(vs.indexedFetchStreams & (1u << s)))
+            continue;
+        const uint64_t address = sc.streamAddress[s];
+        const uint32_t dwords = sc.streamDwords[s];
+        const bool live = StreamRangeLive(address, uint64_t(dwords) * 4);
+        d += std::format(", stream {} at {:X} ({} dwords){}", s, address, dwords, live ? "" : " OUTSIDE LIVE MEMORY");
+        if (!live)
+        {
+            static uint32_t reported = 0;
+            if (reported++ < 32)
+                log::Error("GPU breadcrumbs: vs {:016X} stream {} reads {:X}-{:X} ({} dwords), outside this frame's memory (frame {})",
+                    vs.hash, s, address, address + uint64_t(dwords) * 4, dwords, s_r.frame);
+        }
+    }
+    if (ps)
+        for (uint32_t s = 0; s < kFetchSlots; s++)
+            if (ps->textureSlots & (1u << s))
+                d += std::format(", t{}={}", s, sc.texture2DIndices[s]);
+    return d;
+}
+
 void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t vertexCount, IndexList& indices, HostShader* vs, HostShader* ps,
     uint32_t indexBias = 0)
 {
@@ -8524,6 +8626,7 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
         }
         sc.streamAddress[s] = it->second.second + (start - it->second.first);
         sc.streamDwords[s] = dwords;
+        sc.streamAddress[s] = FaultTestAddress(sc.streamAddress[s]);
         static const uint64_t traceFrame = [] { const char* v = std::getenv("AC6_DRAW_TRACE"); return v ? std::stoull(v) : UINT64_MAX; }();
         if (s_r.frame == traceFrame)
         {
@@ -8743,6 +8846,9 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
         s_r.preUiFrame = s_r.frame;
     }
     g_video.CountGpuPassDraw();
+    breadcrumbs::NoteDraw(cl, s_r.frame, vs->hash, ps ? ps->hash : 0);
+    if (breadcrumbs::Detailed())
+        breadcrumbs::Detail(DescribeDrawForBreadcrumb(sc, *vs, ps, targets, primType, firstVertex, vertexCount, uint32_t(indices.size())));
     // AC6_SKIP_VS=<hex prefix>[,<prefix>...]@<first>-<last>[;...]: skip draws whose vertex shader hash
     // starts with a prefix during those frames (bisecting which draws produce something on screen).
     // <prefix>#<n0>-<n1> skips only the n0-th to n1-th matching draws of each frame (counted from 0).
@@ -9100,11 +9206,16 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
     // with its contents:
     // a pixel column at the 16:9 box's edge would be covered on some frames by neither the menu's bands nor their wrapped
     // copies (faint light lines at the box's edges where the hangar's top and bottom bands darken it).
-    if ((TaaOn() || FsrRunning()) && targets.color && targets.color == s_r.taaSurface && TaaSurfaceLive() && !t_uiDraw)
+    // Moved in clip space (the half-pixel offset's oPos.xy += offset x oPos.w, before the y flip), not by moving the
+    // viewport: Vulkan clips to the viewport, so a viewport moved up or left by up to half a pixel left the samples past
+    // its far edges uncovered on those frames.
+    if ((TaaOn() || FsrRunning()) && targets.color && targets.color == s_r.taaSurface && TaaSurfaceLive() && !t_uiDraw &&
+        viewport.width > 0.0f && viewport.height > 0.0f)
     {
         const auto [jx, jy] = TaaJitter(SeedFrame());
-        viewport.x += jx;
-        viewport.y += jy;
+        const float offset[2] = { sc.halfPixelOffsetX + 2.0f * jx / viewport.width, sc.halfPixelOffsetY - 2.0f * jy / viewport.height };
+        std::memcpy(shared.memory + offsetof(SharedConstants, halfPixelOffsetX), offset, sizeof(offset));
+        std::memcpy(&sc.halfPixelOffsetX, offset, sizeof(offset));
         // The world's view-projection (c116-c119) as a perspective draw into the scene has it: its z column depends on the
         // position (the sky's and the clouds' pin z to the far plane), and so does w. Not every such draw holds it there:
         // ~60 of a frame's ~670 (some object shaders) put their own object's world x view-projection in c116-c119, and
@@ -10359,6 +10470,11 @@ void RunAmbientOcclusion(RenderCommandList& cl, HostImage& image)
         BindCommon(cl);
         for (const AoTerrainDraw& note : s_aoTerrainDraws)
         {
+            if (breadcrumbs::Detailed())
+            {
+                breadcrumbs::NoteDraw(cl, s_r.frame, 0, 0);
+                breadcrumbs::Detail(std::format("ambient occlusion: a terrain draw again, {} indices", note.indexCount));
+            }
             SetViewport(cl, note.viewport);
             SetScissor(cl, RenderRect(0, 0, int32_t(note.width), int32_t(note.height)));
             SetPipeline(cl, note.pipeline);
@@ -10691,6 +10807,11 @@ void RunEmitterLight(RenderCommandList& cl, HostImage& image)
     BindCommon(cl);
     for (const AoTerrainDraw& note : s_lightDraws)
     {
+        if (breadcrumbs::Detailed())
+        {
+            breadcrumbs::NoteDraw(cl, s_r.frame, 0, 0);
+            breadcrumbs::Detail(std::format("emitter light: a draw again, {} indices", note.indexCount));
+        }
         SetViewport(cl, note.viewport);
         SetScissor(cl, RenderRect(0, 0, int32_t(note.width), int32_t(note.height)));
         SetPipeline(cl, note.pipeline);
@@ -11292,6 +11413,12 @@ void RunPlanarReflection(RenderCommandList& cl, HostImage& image, const HostImag
         const AoTerrainDraw& d = note.draw;
         if (!d.pipeline || (layersOnly && note.depthWrite))
             continue;
+        if (breadcrumbs::Detailed())
+        {
+            breadcrumbs::NoteDraw(cl, s_r.frame, 0, 0);
+            breadcrumbs::Detail(std::format("planar reflection: a scene draw again, {} indices, {} vertex streams, depth write {}",
+                d.indexCount, d.viewCount, note.depthWrite));
+        }
         const float sx = float(w) / float(d.width), sy = float(h) / float(d.height);
         SetViewport(cl, RenderViewport(note.viewport.x * sx, note.viewport.y * sy, note.viewport.width * sx, note.viewport.height * sy,
             note.viewport.minDepth, note.viewport.maxDepth));
@@ -12000,7 +12127,7 @@ void ResolveImpl(uint32_t device, uint32_t flags, const ResolveRect* srcRect, ui
                     if (msDepth || (scale == 1 && src->samples == 1 && src->format == kDepthFormat && src->stencilDescriptor))
                     {
                         oneStencil = &s_r.resolvedStencil[fetch.BaseAddress() & 0x1FFFFFFF];
-                        EnsureImage(*oneStencil, hostW, hostH, RenderFormat::R8_UNORM, false);
+                        EnsureResolvedStencil(*oneStencil, hostW, hostH, worldResolve, nativeResolve);
                         if (oneStencil->width != dst.width || oneStencil->height != dst.height)
                         {
                             oneStencil = nullptr;   // one framebuffer needs them the same size: the passes below
@@ -12061,7 +12188,7 @@ void ResolveImpl(uint32_t device, uint32_t flags, const ResolveRect* srcRect, ui
                         if (scale == 1 && src->format == kDepthFormat)
                         {
                             HostImage& stencilImage = s_r.resolvedStencil[fetch.BaseAddress() & 0x1FFFFFFF];
-                            EnsureImage(stencilImage, hostW, hostH, RenderFormat::R8_UNORM, false);
+                            EnsureResolvedStencil(stencilImage, hostW, hostH, worldResolve, nativeResolve);
                             if (stencilImage.fresh)
                             {
                                 Transition(cl, stencilImage, RenderTextureLayout::COLOR_WRITE);
@@ -12101,9 +12228,15 @@ void ResolveImpl(uint32_t device, uint32_t flags, const ResolveRect* srcRect, ui
                 }
                 // The scene image (0xA5BEB000, the world pass's 1280x720 resolve, which the post chain, the distortion
                 // and the composite read), once its last part is in (the game resolves it in halves): ambient
-                // occlusion, emitter light, SMAA, then TAA or FSR and the object motion blur.
-                if (!depth && (fetch.BaseAddress() & 0x1FFFFFFF) == 0x05BEB000 && dx + w >= int32_t(dstW) && dy + h >= int32_t(dstH))
+                // occlusion, emitter light, SMAA, then TAA or FSR and the object motion blur. Once a frame: as a mission is
+                // paused the game resolves the finished frame (its HUD on it) into the same image again, as the pause
+                // menu's background. Taken for the scene, that copy had the ambient occlusion over it a second time,
+                // without the terrain's depth (the frame's terrain draws already used) and so on the terrain too, held
+                // for as long as the game stays paused.
+                if (!depth && (fetch.BaseAddress() & 0x1FFFFFFF) == 0x05BEB000 && dx + w >= int32_t(dstW) && dy + h >= int32_t(dstH) &&
+                    s_r.scenePostFrame != s_r.frame)
                 {
+                    s_r.scenePostFrame = s_r.frame;
                     // (The sea's reflection of the scene: the scene's surface, whose sea draws give the camera.)
                     s_r.seaSceneSurface = surface;
                     // Ambient occlusion into the scene's colour, before the anti-aliasing.
@@ -12114,25 +12247,29 @@ void ResolveImpl(uint32_t device, uint32_t flags, const ResolveRect* srcRect, ui
                     if (SmaaOn())
                         RunSmaa(cl, dst);
                     // Temporal AA or FSR: the surface the scene is drawn in, jittered from the next frame on.
-                    // With FSR upscaling the scene's surfaces are at the render scale from the next frame on. FSR
-                    // makes the target, at the frame's size, from the render-size resolve.
+                    // With FSR upscaling the scene's surfaces are at the render scale from the next frame on, when FSR
+                    // ran on this one: FSR makes the target, at the frame's size, from the render-size resolve. Where
+                    // it can't run (no world camera among the draws: the hangar's aircraft select), the surfaces stay at
+                    // the frame's size. Some screens draw their menus into the surface the scene is resolved from: at
+                    // the render scale with nothing to scale it up, the whole frame showed small in a corner.
                     if (TaaOn() || s_r.fsr)
                     {
                         s_r.taaSurface = surface;
                         s_r.taaSurfaceFrame = s_r.frame;
-                        if (s_r.upscaling)
-                        {
-                            s_r.worldColorSurface = sourceSurface;
-                            s_r.worldDepthSurface = U32(device + kDevDepthStencil);
-                            s_r.worldFrame = s_r.frame;
-                        }
                         // (Without upscaling FSR works on the resolve's own image: with HDR from the scene that is the
                         // target's float twin, not this map's.)
                         HostImage& target = worldResolve ? s_r.resolved[0x05BEB000] : dst;
                         // (Object motion blur: its motion is made before the anti-aliasing, which stores this frame's
                         // camera as the last one, and the blur is applied after it.)
                         HostImage* const blurMotion = MotionBlurStrength() > 0.0f ? MotionForBlur(cl) : nullptr;
-                        if (!(s_r.fsr && RunFsr(cl, target, worldResolve ? &s_r.fsrColor : nullptr)))
+                        const bool fsrRan = s_r.fsr && RunFsr(cl, target, worldResolve ? &s_r.fsrColor : nullptr);
+                        if (s_r.upscaling && fsrRan)
+                        {
+                            s_r.worldColorSurface = sourceSurface;
+                            s_r.worldDepthSurface = U32(device + kDevDepthStencil);
+                            s_r.worldFrame = s_r.frame;
+                        }
+                        if (!fsrRan)
                         {
                             if (worldResolve)
                                 StretchInto(cl, s_r.fsrColor, target, uint32_t(ToHostX(dstW) * s_r.sceneResX / s_r.resX + 0.5),
@@ -12921,6 +13058,23 @@ void PresentImpl(uint32_t vblanks)
         }
         if (source)
             source = &Readable(cl, *source);
+        // AC6_GPU_FAULT_TEST: the gamma ramp table's pass into its image, reading the table at an unmapped address.
+        if (FaultTestDue() && s_r.gammaLutPipeline)
+        {
+            MarkPass([] { return std::string("AC6_GPU_FAULT_TEST: a read of an unmapped address"); });
+            EnsureImage(s_r.rampImage, 1026, 1, RenderFormat::R16G16B16A16_FLOAT, false, 1, false, true);
+            Transition(cl, s_r.rampImage, RenderTextureLayout::COLOR_WRITE);
+            cl.setFramebuffer(GetFramebuffer(&s_r.rampImage, nullptr));
+            SetViewport(cl, RenderViewport(0.0f, 0.0f, 1026.0f, 1.0f));
+            SetScissor(cl, RenderRect(0, 0, 1026, 1));
+            SetPipeline(cl, s_r.gammaLutPipeline.get());
+            BindCommon(cl);
+            const uint32_t push[4] = { 0, 0, 0x1000, 0 };
+            cl.setGraphicsPushConstants(0, push, 0, sizeof(push));
+            cl.drawInstanced(3, 1, 0, 0);
+            cl.setFramebuffer(nullptr);
+            Transition(cl, s_r.rampImage, RenderTextureLayout::SHADER_READ);
+        }
         // Frosted glass at the sides of a 16:9 picture, where the frame is the whole picture.
         if (source && !dumping && !presentOverride && sourceScaleX == 1.0f && sourceScaleY == 1.0f &&
             source->width == s_r.targetWidth && source->height == s_r.targetHeight)

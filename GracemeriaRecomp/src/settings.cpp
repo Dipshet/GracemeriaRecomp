@@ -289,7 +289,7 @@ const Setting kSettings[] = {
 
     // The controller buttons the settings overlay shows, listed above Touchpad as Back.
     { "controller", "button_style", "AC6_BUTTON_STYLE", kText, "\"playstation\"",
-      "The controller buttons the settings overlay shows\n"
+      "The controller buttons the settings overlay and the game's prompts show\n"
       "Default: Xbox" },
     // A DualShock 4 / DualSense's touchpad click as Back (input/input.cpp).
     { "controller", "touchpad_back", "AC6_TOUCHPAD_BACK", kBool, "true",
@@ -404,6 +404,7 @@ const Setting kSettings[] = {
       "Default: Off" },
     { "modding", "texture_replacements", "AC6_TEXTURE_MODS", kBool, "false",
       "Replaces textures with mods/<mod>/textures/<hash>.dds next to the game, at any resolution\n"
+      "F5 reads the files again, so an edited texture shows at once\n"
       "Default: On" },
     { "modding", "package_mods", "AC6_PACKAGE_MODS", kBool, "false",
       "Loads the mods' game data from mods/<mod>/packages/ when the game starts\n"
@@ -417,6 +418,34 @@ const Setting kSettings[] = {
       "Default: On" },
     { "bug_reports", "attitude_trace", "AC6_ATT_TRACE", kBool, "true",
       "Writes the player aircraft's rotation step and the camera's direction to the log every frame\n"
+      "Default: Off" },
+    // The graphics driver's paths (plume reads the variables when it makes the device) and the GPU debug mode
+    // (gpu/video.cpp).
+    { "bug_reports", "pipeline_libraries", "AC6_PIPELINE_LIBRARIES", kBool, "false",
+      "Builds each graphics pipeline from ready-made parts the first time it is needed\n"
+      "Off: whole pipelines are built instead, a little slower to build\n"
+      "Try Off if the game crashes or freezes with your graphics driver\n"
+      "Default: On" },
+    { "bug_reports", "dynamic_rendering", "AC6_DYNAMIC_RENDERING", kBool, "false",
+      "Draws with Vulkan's dynamic rendering\n"
+      "Off: classic render passes instead, and whole pipelines (Pipeline libraries need it)\n"
+      "Try Off if the game crashes, freezes or draws wrongly with your graphics driver\n"
+      "Default: On" },
+    // The renderer's kept copies of guest vertex data (gpu/renderer.cpp: UseVertexStream, and the streams the shaders
+    // read by address).
+    { "bug_reports", "vertex_cache", "AC6_VERTEX_CACHE", kBool, "false",
+      "Keeps the models' vertex data on the graphics card from frame to frame, copying only what the game changes\n"
+      "Off: copied again every frame, costs CPU\n"
+      "Try Off if parts of aircraft or other models go missing after playing for a while\n"
+      "Default: On" },
+    { "bug_reports", "stream_cache", "AC6_STREAM_CACHE", kBool, "false",
+      "Keeps the vertex data the game's shaders read directly on the graphics card from frame to frame, copying only what the game changes\n"
+      "Off: copied again every frame, costs CPU\n"
+      "Try Off if parts of aircraft or other models go missing after playing for a while\n"
+      "Default: On" },
+    { "bug_reports", "gpu_debug", "AC6_GPU_DEBUG", kBool, "true",
+      "Marks every draw so the log can name the one where the graphics card fails, and draws one frame at a time\n"
+      "Much slower: only for reproducing a crash, a freeze or a rendering bug, then sending ac6_runtime.log\n"
       "Default: Off" },
 };
 
@@ -572,6 +601,11 @@ const Ui kUi[] = {
     { "package_mods", "Debug", "Game data mods", "", 0, 0, 0, "1", "MODDING" },
     { "frame_smoothing", "Debug", "Frame time smoothing (VSync)", "", 0, 0, 0, "1", "FRAME RATE" },
     { "attitude_trace", "Debug", "Log camera every frame", "", 0, 0, 0, "0", "CAPTURE AND LOGS" },
+    { "pipeline_libraries", "Debug", "Pipeline libraries", "", 0, 0, 0, "1", "GRAPHICS DRIVER" },
+    { "dynamic_rendering", "Debug", "Dynamic rendering", "", 0, 0, 0, "1", "GRAPHICS DRIVER" },
+    { "vertex_cache", "Debug", "Vertex cache", "", 0, 0, 0, "1", "GRAPHICS DRIVER" },
+    { "stream_cache", "Debug", "Vertex stream cache", "", 0, 0, 0, "1", "GRAPHICS DRIVER" },
+    { "gpu_debug", "Debug", "GPU debug mode", "", 0, 0, 0, "0", "GRAPHICS DRIVER" },
 };
 static_assert(std::size(kUi) == std::size(kSettings));
 
@@ -874,10 +908,12 @@ std::string TomlValue(const Entry& entry, const std::string& value)
         return value == "1" || value == "true" ? "true" : "false";
     if (entry.kind == ValueKind::Number)
     {
-        // A number bare, a word a number setting also takes (frame_rate = "console") quoted.
+        // A number bare, a word a number setting also takes (frame_rate = "console") quoted. Empty (a default that is no
+        // number: Match display, the primary monitor, Auto) as an empty string: written as 0 it was the same as a choice
+        // of 0 (frame_rate's Uncapped), which was then taken for the default and not saved.
         char* end = nullptr;
         if (value.empty())
-            return "0";
+            return "\"\"";
         std::strtod(value.c_str(), &end);
         if (end && *end == 0)
             return value;

@@ -4,6 +4,12 @@
 #include <cstdio>
 #include <mutex>
 
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "platform/platform.h"
 
 namespace ac6::log {
@@ -51,6 +57,19 @@ void Write(Level level, std::string_view message)
         if (level >= Level::Info)
             fflush(s_file);
     }
+}
+
+void FlushToDisk()
+{
+    std::lock_guard lock(s_mutex);
+    if (!s_file)
+        return;
+    fflush(s_file);
+#if defined(_WIN32)
+    _commit(_fileno(s_file));
+#else
+    fsync(fileno(s_file));
+#endif
 }
 
 } // namespace ac6::log

@@ -632,7 +632,10 @@ bool Recompiler::Recompile(
     case PPC_INST_BCTR:
         if (switchTable != config.switchTables.end())
         {
-            println("\tswitch ({}.u64) {{", r(switchTable->second.r));
+            // AC6: the table index as the guest computes it: its range check (cmplwi) and its scaling (rlwinm) read the
+            // register's low 32 bits. Its upper half can hold anything a 64-bit add left there, which the console
+            // ignores; switched on whole, with the default unreachable, the table was indexed far outside itself.
+            println("\tswitch ({}.u32) {{", r(switchTable->second.r));
 
             for (size_t i = 0; i < switchTable->second.labels.size(); i++)
             {

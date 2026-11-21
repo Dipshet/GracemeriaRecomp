@@ -379,4 +379,9 @@ void DeferredCommandList::writeTimestamp(const RenderQueryPool* queryPool, uint3
     Record([=](RenderCommandList& cl) { cl.writeTimestamp(queryPool, queryIndex); });
 }
 
+void DeferredCommandList::writeBreadcrumb(const RenderBuffer* buffer, uint64_t reachedOffset, uint64_t doneOffset, uint32_t value)
+{
+    Record([=](RenderCommandList& cl) { cl.writeBreadcrumb(buffer, reachedOffset, doneOffset, value); });
+}
+
 } // namespace ac6::gpu

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(GracemeriaRecomp VERSION 1.0.0 LANGUAGES C CXX)
+project(GracemeriaRecomp LANGUAGES C CXX)
 
 # AC6 native runtime. Builds with llvm-mingw on Windows (toolchain/llvm-mingw.cmake) and with
 # the system clang on Linux (build_linux.sh).
@@ -268,17 +268,23 @@ elseif (NOT AC6_DXC)
         set(AC6_DXC "${AC6_DXC_FOUND}")
     endif()
 endif()
-# The settings overlay's fonts (thirdparty/fonts, SIL OFL) and the shipped pipeline list (renderer.cpp PipelineList),
-# embedded (tools/cmake/embed_files.cmake).
+# The settings overlay's fonts (thirdparty/fonts, SIL OFL), the shipped pipeline list (renderer.cpp PipelineList) and the
+# PlayStation face button glyphs (assets/button_glyphs, gpu/texture_mods.cpp), embedded (tools/cmake/embed_files.cmake).
 set(AC6_FONTS_GEN "${CMAKE_CURRENT_BINARY_DIR}/generated/fonts.cpp")
 set(AC6_SHIPPED_PIPELINES "${CMAKE_CURRENT_SOURCE_DIR}/GracemeriaRecomp/src/gpu/shipped_pipelines.bin")
 set(AC6_FONTS "ShareTech=ShareTech-Regular.ttf|ShareTechMono=ShareTechMono-Regular.ttf|ShippedPipelines=${AC6_SHIPPED_PIPELINES}")
+set(AC6_PS_GLYPHS "")
+foreach(hash 567C603ACEC3BEF6 5815009FFD003F54 62B5B1271CAFB882 B30926707688AFA7)
+    set(glyph "${CMAKE_CURRENT_SOURCE_DIR}/assets/button_glyphs/playstation/${hash}.dds")
+    string(APPEND AC6_FONTS "|PlayStationGlyph_${hash}=${glyph}")
+    list(APPEND AC6_PS_GLYPHS "${glyph}")
+endforeach()
 add_custom_command(
     OUTPUT "${AC6_FONTS_GEN}"
     COMMAND "${CMAKE_COMMAND}" "-DOUTPUT=${AC6_FONTS_GEN}" "-DFILES=${AC6_FONTS}" "-DDIR=${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fonts" -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/embed_files.cmake
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/embed_files.cmake" "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fonts/ShareTech-Regular.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fonts/ShareTechMono-Regular.ttf" "${AC6_SHIPPED_PIPELINES}"
-    COMMENT "Embedding the overlay's fonts and the shipped pipeline list"
+        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fonts/ShareTechMono-Regular.ttf" "${AC6_SHIPPED_PIPELINES}" ${AC6_PS_GLYPHS}
+    COMMENT "Embedding the overlay's fonts, the shipped pipeline list and the button glyphs"
     VERBATIM)
 # The renderer's own shaders, compiled at build time.
 set(AC6_INTERNAL_SHADERS_GEN "${CMAKE_CURRENT_BINARY_DIR}/generated/internal_shaders.cpp")
@@ -351,6 +357,7 @@ add_library(ac6_runtime OBJECT
     GracemeriaRecomp/src/gpu/dxc.cpp
     GracemeriaRecomp/src/gpu/no_gpu.cpp
     GracemeriaRecomp/src/gpu/renderer.cpp
+    GracemeriaRecomp/src/gpu/breadcrumbs.cpp
     GracemeriaRecomp/src/gpu/shaders.cpp
     GracemeriaRecomp/src/gpu/vblank.cpp
     GracemeriaRecomp/src/gpu/frame_rate.cpp
@@ -422,11 +429,22 @@ if (AC6_X86_LEVEL STREQUAL "v2")
     target_compile_definitions(ac6_runtime PUBLIC AC6_X86_V2=1)
 endif()
 target_compile_options(ac6_xenonutils PRIVATE -gline-tables-only)
-# The version (project() above), for the log and the update check (update/updater.cpp), and whether this is a release
-# build (AC6_RELEASE: one that updates itself from the GitHub releases; the build scripts pass the AC6_RELEASE
-# environment variable, off unless set): on that file alone, so a new version or the switch rebuilds one file.
+# The version, for the log and the update check (update/updater.cpp), and whether this is a release build (AC6_RELEASE:
+# one that updates itself from the GitHub releases; the build scripts pass the AC6_RELEASE environment variable, off
+# unless set): on that file alone, so a new version or the switch rebuilds one file. The repository holds no version:
+# a release is built with AC6_VERSION set (-DAC6_VERSION or the environment, e.g. 1.0.1, the release's tag without its
+# v), any other build is "dev".
 option(AC6_RELEASE "A release build: it updates itself from the project's GitHub releases" OFF)
-set(AC6_UPDATER_DEFINITIONS "AC6_VERSION=\"${PROJECT_VERSION}\"")
+if (NOT DEFINED AC6_VERSION OR AC6_VERSION STREQUAL "")
+    set(AC6_VERSION "$ENV{AC6_VERSION}")
+endif()
+if (AC6_VERSION STREQUAL "")
+    if (AC6_RELEASE)
+        message(FATAL_ERROR "A release build needs its version: set AC6_VERSION (e.g. 1.0.1)")
+    endif()
+    set(AC6_VERSION "dev")
+endif()
+set(AC6_UPDATER_DEFINITIONS "AC6_VERSION=\"${AC6_VERSION}\"")
 if (AC6_RELEASE)
     list(APPEND AC6_UPDATER_DEFINITIONS "AC6_RELEASE=1")
 endif()

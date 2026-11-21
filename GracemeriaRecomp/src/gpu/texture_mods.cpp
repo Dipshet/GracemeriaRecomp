@@ -20,6 +20,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+const unsigned char* EmbeddedFileData(const char* name, size_t* size);   // (generated: tools/cmake/embed_files.cmake)
+
 namespace ac6::gpu::mods {
 
 using plume::RenderFormat;
@@ -35,6 +37,7 @@ bool s_indexRead = false;
 
 std::atomic<uint64_t> s_generation{ UINT64_MAX };
 std::atomic<bool> s_dumpOn{ false }, s_replaceOn{ true };
+std::atomic<bool> s_reload{ false };   // F5: everything read again
 
 void ReadSettings()
 {
@@ -62,6 +65,22 @@ bool ParseHash(const std::string& stem, uint64_t& hash)
         hash = hash << 4 | uint64_t(v);
     }
     return stem.size() == 16 || !std::isxdigit(uint8_t(stem[16]));
+}
+
+// The PlayStation face buttons in the game's prompts (assets/button_glyphs/playstation, embedded): replacements of
+// the game's 40x40 glyph textures, by their hashes, while the Button style setting is PlayStation. A mod's or language
+// pack's file for the same hash wins.
+constexpr const char* kEmbeddedPrefix = "embedded:";
+constexpr const char* kPlayStationGlyphs[] = {
+    "567C603ACEC3BEF6",   // X: square
+    "5815009FFD003F54",   // B: circle
+    "62B5B1271CAFB882",   // Y: triangle
+    "B30926707688AFA7",   // A: cross
+};
+
+bool PlayStationGlyphs()
+{
+    return settings::Get("AC6_BUTTON_STYLE") == "playstation";
 }
 
 // The chosen language pack's textures first, then mods/<mod>/textures/**.dds with `includeMods`, the mods in name order
@@ -98,6 +117,13 @@ std::unordered_map<uint64_t, std::filesystem::path> ScanMods(bool includeMods)
                 index.emplace(hash, it->path());
         }
     }
+    if (PlayStationGlyphs())
+        for (const char* name : kPlayStationGlyphs)
+        {
+            uint64_t hash;
+            if (ParseHash(name, hash))
+                index.emplace(hash, std::filesystem::path(std::string(kEmbeddedPrefix) + "PlayStationGlyph_" + name));
+        }
     return index;
 }
 
@@ -122,7 +148,7 @@ uint32_t BlockBytes(int format)
     switch (RenderFormat(format))
     {
     case RenderFormat::BC1_UNORM: case RenderFormat::BC4_UNORM: return 8;
-    case RenderFormat::BC2_UNORM: case RenderFormat::BC3_UNORM: case RenderFormat::BC5_UNORM: return 16;
+    case RenderFormat::BC2_UNORM: case RenderFormat::BC3_UNORM: case RenderFormat::BC5_UNORM: case RenderFormat::BC7_UNORM: return 16;
     default: return 0;
     }
 }
@@ -226,7 +252,8 @@ bool RefreshIndex()
     static uint64_t seen = UINT64_MAX;
     static bool replacing = true;
     const uint64_t now = settings::Generation();
-    if (seen == now && s_indexRead)
+    const bool reload = s_reload.exchange(false);
+    if (!reload && seen == now && s_indexRead)
         return false;
     seen = now;
     const bool on = ReplaceOn();
@@ -245,11 +272,18 @@ bool RefreshIndex()
                     break;
                 }
         s_index = std::move(index);
-        if (!s_indexRead || changed)
-            log::Info("Texture mods: {} replacement(s) in {}{}", s_index.size(), platform::PathUtf8(ModsDirectory()), on ? "" : " (off: AC6_TEXTURE_MODS=0)");
+        if (!s_indexRead || changed || reload)
+            log::Info("Texture mods: {} replacement(s) in {}{}{}", s_index.size(), platform::PathUtf8(ModsDirectory()),
+                on ? "" : " (off: AC6_TEXTURE_MODS=0)", reload ? " (F5: all read again)" : "");
         s_indexRead = true;
     }
-    return changed;
+    // (A reload has the renderer check every texture again, and a replaced one reads its file again.)
+    return changed || reload;
+}
+
+void RequestReload()
+{
+    s_reload.store(true);
 }
 
 std::optional<std::filesystem::path> FindReplacement(uint64_t hash)
@@ -344,13 +378,28 @@ void MakeMips(Image& image, uint32_t levels)
 
 bool ReadDds(const std::filesystem::path& path, Image& out, std::string& error)
 {
-    std::ifstream f(path, std::ios::binary);
-    if (!f)
+    std::vector<uint8_t> data;
+    if (const std::string name = platform::PathUtf8(path); name.starts_with(kEmbeddedPrefix))
     {
-        error = "can't open";
-        return false;
+        size_t size = 0;
+        const unsigned char* bytes = EmbeddedFileData(name.c_str() + std::strlen(kEmbeddedPrefix), &size);
+        if (!bytes)
+        {
+            error = "not embedded";
+            return false;
+        }
+        data.assign(bytes, bytes + size);
     }
-    std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    else
+    {
+        std::ifstream f(path, std::ios::binary);
+        if (!f)
+        {
+            error = "can't open";
+            return false;
+        }
+        data.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
     if (data.size() < 128 || std::memcmp(data.data(), "DDS ", 4) != 0)
     {
         error = "not a DDS file";
@@ -388,6 +437,7 @@ bool ReadDds(const std::filesystem::path& path, Image& out, std::string& error)
             case 77: case 78: format = RenderFormat::BC3_UNORM; break;
             case 80: format = RenderFormat::BC4_UNORM; break;
             case 83: format = RenderFormat::BC5_UNORM; break;
+            case 97: case 98: case 99: format = RenderFormat::BC7_UNORM; break;   // (sRGB read as stored, as BC1-3's)
             case 87: case 88: case 91: format = RenderFormat::B8G8R8A8_UNORM; break;
             case 28: case 29: format = RenderFormat::R8G8B8A8_UNORM; break;
             case 61: format = RenderFormat::R8_UNORM; break;
@@ -395,7 +445,7 @@ bool ReadDds(const std::filesystem::path& path, Image& out, std::string& error)
             }
             break;
         }
-        default: error = "compression not supported (DXT1/3/5, ATI1/2 and DX10 BC1-5 / 8-bit RGBA are)"; return false;
+        default: error = "compression not supported (DXT1/3/5, ATI1/2 and DX10 BC1-5, BC7 / 8-bit RGBA are)"; return false;
         }
     }
     else if ((pf.flags & kDdpfRgb) && pf.bits == 32)

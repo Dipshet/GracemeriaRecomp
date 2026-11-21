@@ -18,6 +18,7 @@
 #include <FidelityFX/host/backends/vk/ffx_vk.h>
 
 #include <algorithm>
+#include <utility>
 #include <cstdlib>
 #include <format>
 #include <cstring>
@@ -71,7 +72,20 @@ FfxSurfaceFormat SurfaceFormat(plume::RenderFormat format)
     case plume::RenderFormat::R16G16B16A16_FLOAT: return FFX_SURFACE_FORMAT_R16G16B16A16_FLOAT;
     case plume::RenderFormat::R16G16_FLOAT: return FFX_SURFACE_FORMAT_R16G16_FLOAT;
     case plume::RenderFormat::R32_FLOAT: return FFX_SURFACE_FORMAT_R32_FLOAT;
-    default: return FFX_SURFACE_FORMAT_UNKNOWN;
+    case plume::RenderFormat::R8_UNORM: return FFX_SURFACE_FORMAT_R8_UNORM;   // the reactive mask
+    case plume::RenderFormat::R8G8_UNORM: return FFX_SURFACE_FORMAT_R8G8_UNORM;
+    case plume::RenderFormat::R16_FLOAT: return FFX_SURFACE_FORMAT_R16_FLOAT;
+    case plume::RenderFormat::R16_UNORM: return FFX_SURFACE_FORMAT_R16_UNORM;
+    case plume::RenderFormat::R32G32_FLOAT: return FFX_SURFACE_FORMAT_R32G32_FLOAT;
+    case plume::RenderFormat::R10G10B10A2_UNORM: return FFX_SURFACE_FORMAT_R10G10B10A2_UNORM;
+    default:
+    {
+        // The backend would make its view of the image with no format (undefined: a driver may read anything).
+        static bool logged = false;
+        if (!std::exchange(logged, true))
+            log::Error("FSR: an image format with no FidelityFX format ({})", int(format));
+        return FFX_SURFACE_FORMAT_UNKNOWN;
+    }
     }
 }
 

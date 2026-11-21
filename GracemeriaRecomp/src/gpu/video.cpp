@@ -2,6 +2,7 @@
 
 #include "crash.h"
 #include "game/game_modes.h"
+#include "gpu/breadcrumbs.h"
 #include "gpu/capture.h"
 #include "gpu/deferred_commands.h"
 #include "gpu/frame_rate.h"
@@ -202,6 +203,18 @@ bool Video::Init()
         return false;
     }
     input::Init();
+    // The Debug tab's GPU debug mode (AC6_GPU_DEBUG=1; diagnosis, slow): a breadcrumb per draw with its description and
+    // the vertex streams' range checks (AC6_GPU_BREADCRUMBS=sync, gpu/breadcrumbs.h), and each frame finished on the GPU
+    // before the next is made (AC6_SERIAL_FRAMES=1). Either variable set by hand is kept.
+    if (const char* v = std::getenv("AC6_GPU_DEBUG"); v && *v == '1')
+    {
+        if (!std::getenv("AC6_GPU_BREADCRUMBS"))
+            platform::SetEnvironment("AC6_GPU_BREADCRUMBS", "sync");
+        if (!std::getenv("AC6_SERIAL_FRAMES"))
+            platform::SetEnvironment("AC6_SERIAL_FRAMES", "1");
+        log::Info("GPU debug mode: on (AC6_GPU_BREADCRUMBS={}, AC6_SERIAL_FRAMES={}: slow)", std::getenv("AC6_GPU_BREADCRUMBS"),
+            std::getenv("AC6_SERIAL_FRAMES"));
+    }
     if (const char* v = std::getenv("AC6_BACKGROUND"); v && *v == '1')
         background = true;
     if (const char* v = std::getenv("AC6_FRAME_PACING"); v && *v)
@@ -309,6 +322,17 @@ bool Video::Init()
         const plume::RenderDeviceDescription& d = device->getDescription();
         log::Info("Vulkan device: {} (driver {}, {} MB video memory)", d.name,
             system_info::DriverVersion(uint32_t(d.vendor), d.driverVersion), d.dedicatedVideoMemory / (1024 * 1024));
+    }
+    // The renderer needs Vulkan 1.2 (buffer device addresses, descriptor indexing, timeline semaphores). On an older
+    // driver the first of those calls is to a function the driver doesn't have. The game stops with a message instead.
+    if (const auto* vk = dynamic_cast<const plume::VulkanDevice*>(device.get()); vk && vk->physicalDeviceProperties.apiVersion < VK_API_VERSION_1_2)
+    {
+        const uint32_t v = vk->physicalDeviceProperties.apiVersion;
+        log::Error("{} offers Vulkan {}.{}.{}: the game needs Vulkan 1.2 or newer (update the graphics driver)", device->getDescription().name,
+            VK_API_VERSION_MAJOR(v), VK_API_VERSION_MINOR(v), VK_API_VERSION_PATCH(v));
+        static const std::string reason = std::format("the graphics driver offers Vulkan {}.{}, the game needs 1.2 or newer. "
+            "Update the graphics driver", VK_API_VERSION_MAJOR(v), VK_API_VERSION_MINOR(v));
+        crash::Shutdown(1, reason.c_str());
     }
     if (const auto* vk = dynamic_cast<const plume::VulkanDevice*>(device.get()))
         log::Info("Vulkan paths: {}, {}", vk->dynamicRenderingSupported ? "dynamic rendering" : "render passes",
@@ -884,6 +908,11 @@ void Video::Present(uint32_t vblanks, bool waitAll, bool pumpEvents)
             PumpEvents();
         return;
     }
+    // AC6_SERIAL_FRAMES=1 (diagnosis): each frame is finished on the GPU before the next one is made, nothing of two
+    // frames in flight at once (a test for faults that come from frames overlapping).
+    static const bool serialFrames = [] { const char* v = std::getenv("AC6_SERIAL_FRAMES"); return v && *v == '1'; }();
+    if (serialFrames)
+        waitAll = true;
     plume::RenderCommandList& cl = Commands();
     if (GpuTiming() && gpuTimers[slot])
     {
@@ -897,7 +926,8 @@ void Video::Present(uint32_t vblanks, bool waitAll, bool pumpEvents)
         deferred->Finish();
     commandLists[slot]->end();
     frameOpen = false;
-    const PresentJob job{ slot, swapChainIndex, imageAcquired, vblanks, timeline ? timelineIssued.load(std::memory_order_relaxed) + 1 : 0 };
+    const PresentJob job{ slot, swapChainIndex, imageAcquired, vblanks, timeline ? timelineIssued.load(std::memory_order_relaxed) + 1 : 0,
+        breadcrumbs::Made() };
     if (timeline)
         timelineIssued.store(job.timeline, std::memory_order_release);
     imageAcquired = false;
@@ -998,6 +1028,7 @@ void Video::Execute(const PresentJob& job)
         std::lock_guard lock(*vq->queue->mutex);
         plume::NoteVulkanResult(vkQueueSubmit(vq->queue->vk, 1, &submit, VK_NULL_HANDLE));
     }
+    breadcrumbs::Submitted(job.breadcrumbs);
     CheckDeviceLost();
     const auto t0 = Clock::now();
     Pace(job.vblanks);   // the GPU works on the frame meanwhile
@@ -1043,8 +1074,9 @@ void Video::CheckDeviceLost()
     if (!plume::VulkanDeviceLost())
         return;
     const plume::RenderDeviceDescription& d = device->getDescription();
-    log::Error("The Vulkan device was lost (VK_ERROR_DEVICE_LOST) after {} frames: the GPU driver reset or "
-               "crashed. GPU: {}, driver {}", FramesIssued(), d.name, system_info::DriverVersion(uint32_t(d.vendor), d.driverVersion));
+    log::Error("The Vulkan device was lost (VK_ERROR_DEVICE_LOST) with the renderer at frame {}: the GPU driver reset or "
+               "crashed. GPU: {}, driver {}", RendererFrame(), d.name, system_info::DriverVersion(uint32_t(d.vendor), d.driverVersion));
+    breadcrumbs::Report(device.get());
     crash::Shutdown(1, "the graphics driver stopped responding");
 }
 

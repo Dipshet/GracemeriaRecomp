@@ -163,6 +163,10 @@ namespace plume {
         virtual void discardTexture(const RenderTexture* texture) = 0; // D3D12 only.
         virtual void resetQueryPool(const RenderQueryPool *queryPool, uint32_t queryFirstIndex, uint32_t queryCount) = 0;
         virtual void writeTimestamp(const RenderQueryPool *queryPool, uint32_t queryIndex) = 0;
+        // AC6: a GPU crash breadcrumb. `value` goes to `buffer` at `reachedOffset` once the GPU has got this far, and
+        // to `doneOffset` once the work before it has finished, where the driver can say so (VK_AMD_buffer_marker).
+        // Without it only the first is written (a transfer fill), and inside a render pass as the pass ends.
+        virtual void writeBreadcrumb(const RenderBuffer *buffer, uint64_t reachedOffset, uint64_t doneOffset, uint32_t value) {}
 
         // Concrete implementation shortcuts.
         inline void barriers(RenderBarrierStages stages, const RenderBufferBarrier &barrier) {
