@@ -64,6 +64,10 @@ struct Recompiler
 
     bool Recompile(const Function& fn);
     bool UsesContextRegisters(const Function& fn) const;   // AC6
+    // AC6: hook gates (RecompilerConfig::hookGates). The function being recompiled's index in `functions` (its slot), and
+    // whether a function gets a gate.
+    size_t currentOrdinal = 0;
+    bool HasHookGate(const Function& fn) const;
 
     void Recompile(const std::filesystem::path& headerFilePath);
 

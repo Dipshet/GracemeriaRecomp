@@ -11,6 +11,7 @@
 #include "gpu/renderer.h"
 #include "log.h"
 #include "memory.h"
+#include "mods/mods.h"
 #include "ppc.h"
 
 #include <array>
@@ -182,6 +183,7 @@ template<size_t I> void Factory(PPCContext& __restrict ctx, uint8_t* base)
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - s_start).count();
     log::Info("Mode: {} (frame {}, {:.1f} s; from {}){}", kModes[built].name, frame, seconds,
         previous >= 0 ? kModes[previous].name : "boot", built != int(I) ? std::format(" in place of {}", kModes[I].name) : "");
+    mods::OnMode(kModes[built].name);   // the Lua mods' mode event
     // AC6_MODE_TRACE=1: also the guest call chain that made the change (finding the code that drives the modes).
     static const bool trace = [] { const char* v = std::getenv("AC6_MODE_TRACE"); return v && *v == '1'; }();
     if (trace)

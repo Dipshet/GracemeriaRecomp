@@ -1,0 +1,68 @@
+# Names for the game's functions (guest addresses), for the Lua mods' ac6.sym (GracemeriaRecomp/src/mods/mods.h).
+# Embedded in the executable. Merged with every symbols/*.toml next to the executable (e.g. tools/ida/export_symbols.py's
+# output) and each mod's own symbols.toml, later files winning. Class names from the game's RTTI and Class::vfN for its
+# virtual functions come on top of these, from the image itself (src/mods/rtti.h).
+#
+# [functions]  name = address
+# [signatures] name = "ret(arg, ...)": ac6.game.fn's signature when a script gives none (types: void bool s8 u8 s16
+#              u16 s32 u32 s64 u64 ptr f32 f64)
+#
+# These come from the runtime's own patches (src/game, src/gpu, src/plugin), where each is described; the names are
+# the runtime's, not the game's, except where RTTI or a string gave them.
+
+[functions]
+# Flight model (plugin/ac6_plugin.h)
+flight_drift_start_check = 0x822A5C90       # (r3 drift, r5 inputs, r6 stall bit, f1 dt) -> r3
+flight_drift_end_check = 0x822A5D78         # (r3 drift, r5 inputs, f1 dt) -> r3 still active
+flight_drift_update = 0x822A5F08            # (r3 drift, r5 inputs, f1 dt) -> r3 active
+flight_drift_pitch_authority = 0x822A5FB8   # (r3 drift) -> f1
+flight_drift_decel = 0x822A5E90             # (r3 drift, f1 speed) -> f1
+
+# Cameras and projection (game/widescreen.cpp, game/cockpit.cpp, game/frame_rate_fixes.cpp)
+camera_follow_attitude = 0x8225E368         # (r3 camera, f1 dt)
+"CAce6CameraManager::InitLens" = 0x8225DDE8 # every camera's lens: the 16:9 aspect (camera +216), the FOV (camera +212)
+camera_shake = 0x8225D850                   # camera modes 1-3: third person, cockpit, HUD
+camera_mode_set = 0x82226CF0                # the camera mode's setter: shows the exterior body or the cockpit groups
+pip_camera_update = 0x822F1090              # the picture-in-picture camera (container at root + 0x31090)
+replay_stick_camera = 0x82276890            # the replay viewer's stick camera (mission state 3)
+perspective_wrapper_a = 0x82271300          # a perspective builder's wrapper: f1 the aspect
+perspective_wrapper_b = 0x82271350          # the other: f1 the vertical field of view (radians), f2 the aspect
+render_view_set_viewport = 0x822713A0       # stores the viewport's size at view +80 / +84
+target_marker_project = 0x8224EC20          # a target marker: clip space to 1280x720 canvas pixels
+
+# The aircraft's cockpit model (game/cockpit.cpp)
+cockpit_submit_group = 0x822247F0           # (model, transform, group): one of the model's part groups drawn
+
+# Frame, 2D layers, movies (game/ui_layers.cpp, gpu/d3d.cpp)
+draw_2d_layers = 0x821383D0                 # records each 2D layer's draw (HUD, menus, Flash screens, fades)
+frame_2d_layers = 0x821D0D78                # the frame's 2D layers, after the 3D scene and its post-processing
+ui_layer_viewport = 0x82138758              # a layer's first command (run on the render thread)
+ui_layer_restore_states = 0x82138260        # a layer's last command
+movie_queue_frame = 0x821D94A8              # CNuMoviePlayer: its frame's draw queued
+d3d_swap = 0x821F03B0                       # the D3D swap (the runtime presents the frame after it)
+d3d_draw_quads_up = 0x821DEED0              # D3D's inline quad-list draw
+D3DDevice_Resolve = 0x821E2BB8
+
+# Time, modes, missions
+"CNuTimer::advance" = 0x82211F60            # the frame clock
+mode_manager = 0x821BA5D0                   # builds each mode task (game/game_modes.cpp)
+mission_var_apply = 0x82267258
+"CAce6Missile::steer" = 0x822D1718
+
+# The map (game/draw_distance.cpp)
+map_draw = 0x820FDCD0
+map_cell_visible = 0x820FFAD0
+
+[data]
+game_root = 0x826E4E54                      # a pointer to the game's root object: [root + 0x2F9A0] the main camera
+aspect_16_9 = 0x8206A0F4                    # the 16:9 aspect constant every camera's lens copies (float)
+reference_timestep = 0x82069DBC             # 1/30, the physics' reference step (float)
+frame_tick_delta = 0x826EDDA0               # CNuTimer's tick delta this frame
+seconds_per_tick = 0x826EDDB0               # CNuTimer's seconds per tick
+last_frame_tick = 0x826EDD98                # CNuTimer's previous frame's tick (u64)
+ui_vertex_slot = 0x826E4DD0                 # the 2D layers' vertex buffer slot (0-2) the main thread writes
+
+[signatures]
+camera_follow_attitude = "void(ptr, f32)"
+flight_drift_pitch_authority = "f32(ptr)"
+flight_drift_decel = "f32(ptr, f32)"

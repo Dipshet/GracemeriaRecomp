@@ -1,11 +1,20 @@
 *.iso
 *.xex
+# IDA databases (tools/ida works on one of the game's default.xex)
+*.i64
+*.idb
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
 /dlc/
 /saves/
 
 /GracemeriaRecompLib/ppc/
 
 /thirdparty/FidelityFX-SDK/
+/thirdparty/LuaJIT/
 
 /toolchain/*
 !/toolchain/env.bat

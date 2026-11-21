@@ -13,6 +13,7 @@
 // (default hold 4), e.g. AC6_AUTO_START=60 to get through the intro without a controller.
 
 #include <cstdint>
+#include <string_view>
 
 union SDL_Event;
 
@@ -41,6 +42,25 @@ void HandleEvent(const SDL_Event& event);   // main thread
 void Update();                              // main thread, once per frame
 
 PadState GetState(uint32_t user);           // any thread
+
+// For mods (mods/mods.h), any thread, as of the last Update (none of it while the settings overlay is open):
+// - the pads as the player left them, before the mods' filters (GetState is what the game reads, after them), and the
+//   buttons that went down since the Update before;
+// - a key or mouse button by the settings file's names ("F5", "LeftControl", "Mouse1": kbm::KeyCodes): -1 when there's
+//   no such key, else whether it's held, and whether it went down since the Update before (a tap between two counts);
+// - the mouse: the cursor in window units, its buttons (SDL_BUTTON_MASK bits) held and gone down, the wheel's notches.
+PadState PlayerState(uint32_t user, uint16_t* pressed = nullptr);
+int KeyState(std::string_view name, bool* pressed = nullptr);
+struct MouseState
+{
+    float x = 0.0f, y = 0.0f;
+    uint32_t buttons = 0, pressed = 0;
+    float wheel = 0.0f;   // up positive
+};
+MouseState Mouse();
+// The mods' pad filter: each pad, at each Update while the overlay is closed, before the game can read it (main thread).
+using PadFilter = void (*)(uint32_t user, PadState& pad);
+void SetPadFilter(PadFilter filter);
 // While the settings overlay is open (src/ui/overlay.cpp): the game sees idle pads, the mouse is released.
 void SetHeld(bool held);                    // main thread
 void SetVibration(uint32_t user, uint16_t left, uint16_t right);   // any thread

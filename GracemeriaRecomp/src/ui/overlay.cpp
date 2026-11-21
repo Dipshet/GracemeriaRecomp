@@ -16,6 +16,7 @@
 #include "input/input.h"
 #include "input/kbm.h"
 #include "log.h"
+#include "mods/mods.h"
 #include "platform/platform.h"
 #include "settings.h"
 #include "update/updater.h"
@@ -122,6 +123,27 @@ constexpr int kQuitRow = -3;     // the Game tab's Quit to desktop (asks first)
 constexpr int kTexturesRow = -5;   // the Debug tab's texture browser
 constexpr int kDlcFolderRow = -6;   // the Game tab's Open DLC folder (an action)
 constexpr int kUpdateRow = -7;      // the Game tab's Updates: the version, a check, the update (actions)
+constexpr int kModRow0 = -5000;     // rows -5000 - i: the Game tab's MODS, mod i of s_mods (read only)
+
+// The mods (mods/mods.h: the Lua mods, then the plugins), read with the rows.
+std::vector<ac6::mods::ModStatus> s_mods;
+
+bool IsModRow(int edit) { return edit <= kModRow0 && edit > kModRow0 - int(s_mods.size()); }
+const ac6::mods::ModStatus& ModAt(int edit) { return s_mods[size_t(kModRow0 - edit)]; }
+
+// A mod row's value: on (with its hooks), off, or failed (red).
+std::string ModText(const ac6::mods::ModStatus& m, bool* problem = nullptr)
+{
+    // (Turned off on purpose: disabled in its mod.toml, left out by AC6_LUA_DISABLE, a plugin declining.)
+    const bool failed = !m.loaded && !m.error.empty() && m.error.find("disabled") == std::string::npos &&
+        m.error.find("left out") == std::string::npos && m.error.find("declined") == std::string::npos;
+    if (problem)
+        *problem = failed;
+    if (!m.loaded)
+        return failed ? "FAILED" : "OFF";
+    const std::string kind = m.plugin ? "PLUGIN" : m.native ? "ON · NATIVE" : "ON";
+    return m.hooks ? std::format("{} · {} HOOK{}", kind, m.hooks, m.hooks == 1 ? "" : "S") : kind;
+}
 
 // Open DLC folder: the system's file manager, off the main thread.
 std::atomic<bool> s_dlcFolderFailed{ false };
@@ -1761,7 +1783,12 @@ void BuildRows()
         }
     }
     if (std::string_view(kTabs[s_tab]) == "Game")
+    {
+        s_mods = mods::Status();
+        for (size_t i = 0; i < s_mods.size(); i++)
+            s_rows.push_back({ kModRow0 - int(i), "MODS" });
         s_rows.push_back({ kQuitRow, "EXIT" });
+    }
     s_cursor = std::clamp(s_cursor, 0, std::max(0, int(s_rows.size()) - 1));
 }
 
@@ -1810,6 +1837,8 @@ std::string ValueText(const Row& row)
         return UpdateText();
     if (row.edit == kTexturesRow)
         return std::format("{} IN USE", BrowserTextures().size());
+    if (IsModRow(row.edit))
+        return ModText(ModAt(row.edit));
     if (IsBindingRow(row.edit))
         return BindingText(BindingAt(row.edit).value);
     if (IsAdvRow(row.edit))
@@ -1889,7 +1918,7 @@ bool IsText(const Edit& e)
 std::pair<int, int> ChoicePosition(const Row& row)
 {
     if (row.edit == kDlcRow || row.edit == kDlcFolderRow || row.edit == kQuitRow || row.edit == kRenderResRow || row.edit == kTexturesRow ||
-        row.edit == kUpdateRow || IsBindingRow(row.edit) || IsAdvRow(row.edit) || IsTuneRow(row.edit))
+        row.edit == kUpdateRow || IsBindingRow(row.edit) || IsAdvRow(row.edit) || IsTuneRow(row.edit) || IsModRow(row.edit))
         return { -1, 0 };
     if (row.edit == kPresetRow)
         return { CurrentPreset(), int(std::size(kPresets)) };
@@ -1962,7 +1991,7 @@ void StartEditing(int edit)
 
 void Activate(const Row& row)
 {
-    if (row.edit == kDlcRow || row.edit == kRenderResRow)
+    if (row.edit == kDlcRow || row.edit == kRenderResRow || IsModRow(row.edit))
         return;
     if (row.edit == kDlcFolderRow)
     {
@@ -2596,7 +2625,8 @@ void DrawRow(ImDrawList* dl, int index, ImVec2 a, ImVec2 b, bool selected)
         Triangle(dl, ImVec2(a.x + 22.5f * u, cy), 9.0f * u, 12.0f * u, true, Rgb(0xDCE5FF));
     }
     const std::string label = e ? e->entry.label : bind ? bind->info->label : adv ? adv->action->label : tune ? tune->label : row.edit == kDlcRow ? "DLC loaded" : row.edit == kDlcFolderRow ? "Open DLC folder" : row.edit == kUpdateRow ? "Updates" : row.edit == kQuitRow ? "Quit to desktop"
-        : row.edit == kRenderResRow ? "Render resolution" : row.edit == kTexturesRow ? "Textures on screen" : "Quality preset";
+        : row.edit == kRenderResRow ? "Render resolution" : row.edit == kTexturesRow ? "Textures on screen"
+        : IsModRow(row.edit) ? ModAt(row.edit).name : "Quality preset";
     float x = a.x + 40.0f * u;
     const ImU32 labelColor = selected ? Rgb(0xFFFFFF) : Rgb(0xB7C0E3);
     // ENV, or RESTART on a changed setting that needs one (no LIVE badge).
@@ -2685,15 +2715,18 @@ void DrawRow(ImDrawList* dl, int index, ImVec2 a, ImVec2 b, bool selected)
         Text(dl, s_numbers, vsize, ImVec2((vx0 + vx1) / 2 - w / 2, cy - vsize / 2 - u), raised ? Rgb(0xF2D27A) : Rgb(0xA9B4DC), value);
         return;
     }
-    if (row.edit == kDlcRow || row.edit == kDlcFolderRow || row.edit == kUpdateRow)
+    if (row.edit == kDlcRow || row.edit == kDlcFolderRow || row.edit == kUpdateRow || IsModRow(row.edit))
     {
         // Read only: the count, centred like a choice's value, without arrows, red when a package didn't load or is
-        // damaged. Open DLC folder: nothing, unless it didn't open. Updates: its state, red when it failed.
+        // damaged. Open DLC folder: nothing, unless it didn't open. Updates: its state, red when it failed. A mod: its
+        // state, red when it failed.
         bool problem = false;
         if (row.edit == kDlcRow)
             DlcCount(&problem);
         else if (row.edit == kUpdateRow)
             UpdateText(&problem);
+        else if (IsModRow(row.edit))
+            ModText(ModAt(row.edit), &problem);
         else
             problem = s_dlcFolderFailed;
         const float vsize = Fit(s_mono, 16.0f * ut, value, vx1 - vx0), w = TextWidth(s_mono, vsize, value);
@@ -3169,6 +3202,32 @@ void DrawSide(ImDrawList* dl)
                     text += " Loaded though damaged (what's damaged may look wrong, the rest works):" + damaged;
                 text += " Details: dlc_report.txt, next to the log.";
             }
+        }
+        else if (IsModRow(row.edit))
+        {
+            // What it is, who made it, what it has in place, and why it's off.
+            const mods::ModStatus& m = ModAt(row.edit);
+            title = Upper(m.name);
+            if (m.plugin)
+                text = std::format("A plugin: native code the game started from mods/{}", m.id);
+            else
+            {
+                text = !m.description.empty() ? m.description : std::format("A Lua mod, in mods/{}", m.id);
+                if (!m.version.empty() || !m.author.empty())
+                    text += std::format("\n{}{}{}", m.version.empty() ? "" : "Version " + m.version,
+                        !m.version.empty() && !m.author.empty() ? ", " : "", m.author.empty() ? "" : "by " + m.author);
+                if (m.native)
+                    text += "\nIt runs native code (a DLL it loaded)";
+            }
+            if (m.loaded)
+                text += std::format("\n{} hook{} on the game's functions", m.hooks, m.hooks == 1 ? "" : "s");
+            text += "\nMods run with the game's full access: use only mods you trust";
+            // (The error's first line: a script's has its traceback after it, in ac6_runtime.log.)
+            std::string error = m.error.substr(0, m.error.find('\n'));
+            if (error.size() > 160)
+                error = error.substr(0, 157) + "...";
+            if (!error.empty())
+                note = (m.loaded ? "LAST ERROR: " : "") + Upper(error);
         }
         else if (IsTuneRow(row.edit) && !TuneAt(row.edit).action)
         {
@@ -3994,6 +4053,173 @@ void DrawFpsCounter(ImDrawList* dl, ImVec2 pos, ImVec2 size)
 
 } // namespace
 
+// --- Mods' drawing (overlay.h ac6::ui::draw) ----------------------------------------------------------------------------
+namespace draw {
+
+namespace {
+
+thread_local bool t_active = false;   // this thread is running the mods' draw handlers
+ImDrawList* s_list = nullptr;         // their layer (the background list)
+int s_clips = 0;                      // clips pushed and not popped
+
+// 0xAARRGGBB as ImGui's colour (0xAABBGGRR).
+ImU32 Color(uint32_t argb)
+{
+    return IM_COL32((argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF, argb >> 24);
+}
+
+ImFont* FontOf(bool mono) { return mono ? s_numbers : s_body; }
+
+} // namespace
+
+bool Active() { return t_active && s_list; }
+
+void Size(float& width, float& height)
+{
+    const ImVec2 size = ImGui::GetIO().DisplaySize;
+    width = size.x;
+    height = size.y;
+}
+
+void View(float& x, float& y, float& width, float& height)
+{
+    float w = 0.0f, h = 0.0f;
+    Size(w, h);
+    const float fw = float(std::max(1u, gpu::g_video.frameWidth)), fh = float(std::max(1u, gpu::g_video.frameHeight));
+    const float scale = std::min(w / fw, h / fh);
+    width = fw * scale;
+    height = fh * scale;
+    x = (w - width) / 2;
+    y = (h - height) / 2;
+}
+
+void Canvas(float& x, float& y, float& width, float& height)
+{
+    float vx = 0.0f, vy = 0.0f, vw = 0.0f, vh = 0.0f;
+    View(vx, vy, vw, vh);
+    // (A picture wider or narrower than 16:9, AC6_WIDESCREEN: the game keeps its 2D at 16:9, centred.)
+    const float unit = std::min(vw / 16.0f, vh / 9.0f);
+    width = 16.0f * unit;
+    height = 9.0f * unit;
+    x = vx + (vw - width) / 2;
+    y = vy + (vh - height) / 2;
+}
+
+void Line(float x0, float y0, float x1, float y1, uint32_t color, float thickness)
+{
+    if (Active())
+        s_list->AddLine(ImVec2(x0, y0), ImVec2(x1, y1), Color(color), thickness > 0.0f ? thickness : 1.0f);
+}
+
+void Rect(float x0, float y0, float x1, float y1, uint32_t color, float rounding, float thickness)
+{
+    if (!Active())
+        return;
+    if (thickness <= 0.0f)
+        s_list->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), Color(color), rounding);
+    else
+        s_list->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), Color(color), rounding, 0, thickness);
+}
+
+void Circle(float x, float y, float radius, uint32_t color, float thickness)
+{
+    if (!Active())
+        return;
+    if (thickness <= 0.0f)
+        s_list->AddCircleFilled(ImVec2(x, y), radius, Color(color));
+    else
+        s_list->AddCircle(ImVec2(x, y), radius, Color(color), 0, thickness);
+}
+
+void Triangle(float x0, float y0, float x1, float y1, float x2, float y2, uint32_t color, float thickness)
+{
+    if (!Active())
+        return;
+    if (thickness <= 0.0f)
+        s_list->AddTriangleFilled(ImVec2(x0, y0), ImVec2(x1, y1), ImVec2(x2, y2), Color(color));
+    else
+        s_list->AddTriangle(ImVec2(x0, y0), ImVec2(x1, y1), ImVec2(x2, y2), Color(color), thickness);
+}
+
+void Polyline(const float* xy, int points, uint32_t color, bool closed, float thickness)
+{
+    if (!Active() || !xy || points < 2)
+        return;
+    std::vector<ImVec2> p(static_cast<size_t>(points));
+    for (int i = 0; i < points; i++)
+        p[size_t(i)] = ImVec2(xy[2 * i], xy[2 * i + 1]);
+    if (closed && thickness <= 0.0f)
+        s_list->AddConvexPolyFilled(p.data(), points, Color(color));
+    else
+        s_list->AddPolyline(p.data(), points, Color(color), closed ? ImDrawFlags_Closed : 0, thickness > 0.0f ? thickness : 1.0f);
+}
+
+void Text(float x, float y, const char* text, uint32_t color, float size, bool mono)
+{
+    if (Active() && text && *text)
+        s_list->AddText(FontOf(mono), size > 0.0f ? size : 18.0f, ImVec2(x, y), Color(color), text);
+}
+
+void TextSize(const char* text, float size, bool mono, float& width, float& height)
+{
+    width = height = 0.0f;
+    if (!Active() || !text)
+        return;
+    const float s = size > 0.0f ? size : 18.0f;
+    const ImVec2 v = FontOf(mono)->CalcTextSizeA(s, FLT_MAX, 0.0f, text);
+    width = v.x;
+    height = v.y;
+}
+
+void PushClip(float x0, float y0, float x1, float y1)
+{
+    if (!Active())
+        return;
+    s_list->PushClipRect(ImVec2(x0, y0), ImVec2(x1, y1), true);
+    s_clips++;
+}
+
+void PopClip()
+{
+    if (!Active() || s_clips == 0)
+        return;
+    s_list->PopClipRect();
+    s_clips--;
+}
+
+void PopClips()
+{
+    while (Active() && s_clips > 0)
+        PopClip();
+}
+
+} // namespace draw
+
+namespace {
+
+// The mods' layer (their "draw" handlers): ImGui's background list, under the overlay's window and the FPS counter.
+// Inside a frame (between NewFrame and Render), on the window's thread: the game's main thread, a game thread.
+void DrawMods()
+{
+    if (!mods::WantsDraw())
+        return;
+    draw::s_list = ImGui::GetBackgroundDrawList();
+    draw::s_clips = 0;
+    draw::t_active = true;
+    struct End
+    {
+        ~End()
+        {
+            draw::PopClips();
+            draw::t_active = false;
+            draw::s_list = nullptr;
+        }
+    } end;
+    mods::OnDraw();
+}
+
+} // namespace
+
 void Init(SDL_Window* window)
 {
     if (s_init || !window)
@@ -4158,7 +4384,7 @@ void Frame()
         // (The FPS counter and the start-up hint alone, without the backend's new frame: it would read the gamepads for
         // the overlay's keys and show the mouse cursor during play.)
         const float hint = HintAlpha(), updateHint = UpdateHintAlpha(), reloadNote = ReloadNoteAlpha();
-        if (FpsCounterOn() || hint > 0.0f || updateHint > 0.0f || reloadNote > 0.0f)
+        if (FpsCounterOn() || hint > 0.0f || updateHint > 0.0f || reloadNote > 0.0f || mods::WantsDraw())
             if (SDL_Window* window = Window())
             {
                 int w = 0, h = 0, pw = 0, ph = 0;
@@ -4171,6 +4397,7 @@ void Frame()
                     io.DisplayFramebufferScale = ImVec2(float(pw) / float(w), float(ph) / float(h));
                     io.DeltaTime = 1.0f / 60.0f;
                     ImGui::NewFrame();
+                    DrawMods();
                     const ImGuiViewport* vp = ImGui::GetMainViewport();
                     if (FpsCounterOn())
                         DrawFpsCounter(ImGui::GetForegroundDrawList(), vp->Pos, vp->Size);
@@ -4191,6 +4418,7 @@ void Frame()
     }
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
+    DrawMods();   // (under the overlay)
     DrawUi();
     ImGui::Render();
     Publish(ImGui::GetDrawData());
