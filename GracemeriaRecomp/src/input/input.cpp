@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bitset>
 #include <cstdlib>
 #include <deque>
 #include <fstream>
@@ -20,6 +21,7 @@
 #include <cctype>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace ac6::input {
@@ -52,6 +54,22 @@ bool s_autoLoop = true;                          // the default (Start only) rep
 // The periods count from the last wait's end (frame 0 without waits).
 size_t s_autoBase = 0;
 uint32_t s_autoBaseFrame = 0;
+
+// For mods: the keyboard and mouse from events (a tap between two Updates counts as pressed), published at each Update
+// with the pads as the player left them (before the mods' filter), and the filter.
+struct ModKeys
+{
+    std::bitset<SDL_SCANCODE_COUNT> down, pressed;
+    uint32_t mouseDown = 0, mousePressed = 0;
+    float wheel = 0.0f, mouseX = 0.0f, mouseY = 0.0f;
+};
+ModKeys s_keysPending;                 // main thread: since the last Update
+ModKeys s_keys;                        // published, under s_mutex
+PadState s_player[kUsers];             // published, under s_mutex
+uint16_t s_playerPressed[kUsers] = {};
+std::atomic<PadFilter> s_padFilter{ nullptr };
+std::mutex s_keyNamesMutex;
+std::unordered_map<std::string, std::vector<uint32_t>> s_keyNames;   // name -> codes (empty: no such key)
 
 // "start", "a", "start+a", "lup+rt", ... -> button mask and macro inputs (0 = unknown name).
 uint32_t ParseButtons(std::string_view text)
@@ -434,6 +452,37 @@ void HandleEvent(const SDL_Event& event)
 {
     kbm::HandleEvent(event);
     advanced::HandleEvent(event);
+    // The mods' view of the keyboard and mouse.
+    switch (event.type)
+    {
+    case SDL_EVENT_KEY_DOWN:
+        if (event.key.scancode < SDL_SCANCODE_COUNT && !event.key.repeat)
+        {
+            s_keysPending.down.set(event.key.scancode);
+            s_keysPending.pressed.set(event.key.scancode);
+        }
+        break;
+    case SDL_EVENT_KEY_UP:
+        if (event.key.scancode < SDL_SCANCODE_COUNT)
+            s_keysPending.down.reset(event.key.scancode);
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        s_keysPending.mouseDown |= SDL_BUTTON_MASK(event.button.button);
+        s_keysPending.mousePressed |= SDL_BUTTON_MASK(event.button.button);
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        s_keysPending.mouseDown &= ~SDL_BUTTON_MASK(event.button.button);
+        break;
+    case SDL_EVENT_MOUSE_WHEEL:
+        s_keysPending.wheel += event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y;
+        break;
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+        s_keysPending.down.reset();
+        s_keysPending.mouseDown = 0;
+        break;
+    default:
+        break;
+    }
     if (event.type == SDL_EVENT_GAMEPAD_ADDED)
     {
         for (auto* pad : s_pads)
@@ -601,9 +650,28 @@ void Update()
     clock += gpu::Unlocked() ? game::FrameStepRatio() : 1.0;
     s_frame = uint32_t(clock);
 
+    // The mods: the pads as the player left them, then their filter's changes for the game (none while the overlay
+    // holds the input). The keyboard and mouse since the last Update.
+    PadState player[kUsers];
+    std::copy(std::begin(next), std::end(next), std::begin(player));
+    if (const PadFilter filter = s_padFilter.load(std::memory_order_acquire); filter && !s_held)
+        for (uint32_t u = 0; u < kUsers; u++)
+            filter(u, next[u]);
+    ModKeys keys = s_held ? ModKeys{} : s_keysPending;
+    SDL_GetMouseState(&keys.mouseX, &keys.mouseY);
+    s_keysPending.pressed.reset();
+    s_keysPending.mousePressed = 0;
+    s_keysPending.wheel = 0.0f;
+
     Rumble rumble[kUsers];
     {
         std::lock_guard lock(s_mutex);
+        s_keys = keys;
+        for (uint32_t u = 0; u < kUsers; u++)
+        {
+            s_playerPressed[u] = uint16_t(player[u].buttons & ~s_player[u].buttons);
+            s_player[u] = player[u];
+        }
         for (uint32_t u = 0; u < kUsers; u++)
         {
             const PadState& prev = s_published[u];
@@ -659,6 +727,65 @@ void SetVibration(uint32_t user, uint16_t left, uint16_t right)
         return;
     std::lock_guard lock(s_mutex);
     s_rumble[user] = { true, left, right };
+}
+
+PadState PlayerState(uint32_t user, uint16_t* pressed)
+{
+    if (user >= kUsers)
+        return {};
+    std::lock_guard lock(s_mutex);
+    if (pressed)
+        *pressed = s_playerPressed[user];
+    return s_player[user];
+}
+
+int KeyState(std::string_view name, bool* pressed)
+{
+    std::vector<uint32_t> codes;
+    {
+        std::lock_guard lock(s_keyNamesMutex);
+        auto it = s_keyNames.find(std::string(name));
+        if (it == s_keyNames.end())
+        {
+            std::vector<uint32_t> parsed;
+            if (!kbm::KeyCodes(name, parsed))
+                parsed.clear();
+            it = s_keyNames.emplace(std::string(name), std::move(parsed)).first;
+        }
+        codes = it->second;
+    }
+    if (codes.empty())
+        return -1;
+    bool down = false, went = false;
+    std::lock_guard lock(s_mutex);
+    for (const uint32_t code : codes)
+    {
+        if (code >= kbm::kMouseCode)
+        {
+            const uint32_t mask = SDL_BUTTON_MASK(code - kbm::kMouseCode);
+            down = down || (s_keys.mouseDown & mask);
+            went = went || (s_keys.mousePressed & mask);
+        }
+        else if (code < SDL_SCANCODE_COUNT)
+        {
+            down = down || s_keys.down.test(code);
+            went = went || s_keys.pressed.test(code);
+        }
+    }
+    if (pressed)
+        *pressed = went;
+    return down ? 1 : 0;
+}
+
+MouseState Mouse()
+{
+    std::lock_guard lock(s_mutex);
+    return { s_keys.mouseX, s_keys.mouseY, s_keys.mouseDown, s_keys.mousePressed, s_keys.wheel };
+}
+
+void SetPadFilter(PadFilter filter)
+{
+    s_padFilter.store(filter, std::memory_order_release);
 }
 
 } // namespace ac6::input

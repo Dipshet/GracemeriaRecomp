@@ -8,6 +8,7 @@ own licence file in its folder.
 | `SDL` | [SDL](https://github.com/libsdl-org/SDL) | 3.4.18 (`release-3.4.18`) | zlib | git submodule | none |
 | `imgui` | [Dear ImGui](https://github.com/ocornut/imgui) | 1.93.0 (`v1.93.0`) | MIT | git submodule | none |
 | `FidelityFX-SDK` | [AMD FidelityFX SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) | 1.1.4 (`v1.1.4`) | MIT | cloned by the build (`tools/cmake/fetch_thirdparty.cmake`) | `tools/patches/fidelityfx-ac6.patch`: the Vulkan backend for FSR 3.1 |
+| `LuaJIT` | [LuaJIT](https://github.com/LuaJIT/LuaJIT) | 2.1 rolling release, `ea9eb7e` | MIT | cloned by the build (`tools/cmake/fetch_thirdparty.cmake`), built by `tools/cmake/luajit.cmake` | none. A shared library next to the executable (`lua51.dll`, `libluajit-5.1.so`) with its `jit.*` modules in `lua/jit`: both ship with the game |
 | `fsr3-shaders` | FSR 3.1's compute passes from that SDK, compiled to SPIR-V | 1.1.4 | MIT | files | none: compiled by the SDK's FidelityFX_SC (Windows only) for the builds on other platforms (its README) |
 | `ffmpeg-src` | [FFmpeg](https://ffmpeg.org) | n8.1.3 | LGPL 2.1 or later | files, trimmed | `tools/patches/ffmpeg-xma.patch` (XMA packet boundary, single-stream hold-back, first frame). Only the files the WMA Pro / XMA2 decoders build from are kept; regenerating `ffmpeg-config` needs the full n8.1.3 source with the patch |
 | `ffmpeg-config` | FFmpeg's configure output for that build | | LGPL 2.1 or later | files | made for the port (only the two decoders, no assembly) |

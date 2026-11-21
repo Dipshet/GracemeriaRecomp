@@ -264,6 +264,16 @@ bool Recompiler::UsesContextRegisters(const Function& fn) const
     return symbol != image.symbols.end() && (symbol->name.find("__rest") == 0 || symbol->name.find("__save") == 0);
 }
 
+// AC6: hook gates. Every function but the register save/restore helpers (fall-through chains the prologues and epilogues
+// branch into: not functions anyone hooks) and the config's exclusions.
+bool Recompiler::HasHookGate(const Function& fn) const
+{
+    if (!config.hookGates || config.hookGateExclude.count(fn.base) != 0)
+        return false;
+    auto symbol = image.symbols.find(fn.base);
+    return !(symbol != image.symbols.end() && (symbol->name.find("__rest") == 0 || symbol->name.find("__save") == 0));
+}
+
 bool Recompiler::Recompile(
     const Function& fn,
     uint32_t base,
@@ -2474,6 +2484,10 @@ bool Recompiler::Recompile(const Function& fn)
 
     println("PPC_FUNC_IMPL(__imp__{}) {{", name);
     println("\tPPC_FUNC_PROLOGUE();");
+    // AC6: the hook gate (ppc_recomp_shared.h), before anything else: a hooked call goes to the runtime, which runs the
+    // hooks and, when they call the original, this function again past the gate.
+    if (HasHookGate(fn))
+        println("\tPPC_HOOK_GATE({});", currentOrdinal);
 
     auto switchTable = config.switchTables.end();
     bool allRecompiled = true;
@@ -2639,6 +2653,14 @@ void Recompiler::Recompile(const std::filesystem::path& headerFilePath)
         println("#define PPC_CODE_BASE 0x{:X}ull", codeMin);
         println("#define PPC_CODE_SIZE 0x{:X}ull", codeMax - codeMin);
 
+        // AC6: hook gates (ppc_recomp_shared.h): one slot per function in the list (the helpers' unused).
+        if (config.hookGates)
+        {
+            println("");
+            println("#define PPC_HOOK_GATES");
+            println("#define PPC_HOOK_SLOT_COUNT {}", functions.size());
+        }
+
         println("");
 
         println("#ifdef PPC_INCLUDE_DETAIL");
@@ -2674,6 +2696,29 @@ void Recompiler::Recompile(const std::filesystem::path& headerFilePath)
         for (auto& symbol : image.symbols)
             println("PPC_EXTERN_FUNC({});", symbol.name);
 
+        // AC6: hook gates. A function's gate reads its slot: null (not hooked) costs a load and a branch. A slot set by the
+        // runtime sends the call to PPCHookEnter, which runs the hooks and returns true, or false when the call is the
+        // hooks' own call of the original (the function then runs as usual). PPCHookTargets lists the gated functions:
+        // guest address, slot and body (__imp__, the function past any override of its name), for the runtime's lookup.
+        if (config.hookGates)
+        {
+            println("");
+            println("struct PPCHookSlot;");
+            println("struct PPCHookTarget");
+            println("{{");
+            println("\tuint32_t guest;");
+            println("\tuint32_t slot;");
+            println("\tPPCFunc* body;");
+            println("}};");
+            println("extern \"C\" PPCHookSlot* PPCHookSlots[];");
+            println("extern \"C\" const PPCHookTarget PPCHookTargets[];   // ends with a zero guest address");
+            println("extern \"C\" bool PPCHookEnter(PPCHookSlot* slot, PPCContext& ctx, uint8_t* base);");
+            println("#define PPC_HOOK_GATE(slot) do {{ \\");
+            println("\tPPCHookSlot* hookSlot_ = __atomic_load_n(&PPCHookSlots[slot], __ATOMIC_ACQUIRE); \\");
+            println("\tif (__builtin_expect(hookSlot_ != nullptr, 0) && PPCHookEnter(hookSlot_, ctx, base)) return; \\");
+            println("}} while (0)");
+        }
+
         SaveCurrentOutData("ppc_recomp_shared.h");
     }
 
@@ -2686,6 +2731,29 @@ void Recompiler::Recompile(const std::filesystem::path& headerFilePath)
 
         println("\t{{ 0, nullptr }}");
         println("}};");
+
+        if (config.hookGates)
+        {
+            auto nameOf = [&](const Function& fn)
+            {
+                auto symbol = image.symbols.find(fn.base);
+                return symbol != image.symbols.end() ? symbol->name : fmt::format("sub_{:X}", fn.base);
+            };
+            println("");
+            for (auto& fn : functions)
+                if (HasHookGate(fn))
+                    println("extern \"C\" PPC_FUNC(__imp__{});", nameOf(fn));
+            println("");
+            println("extern \"C\" {{");
+            println("PPCHookSlot* PPCHookSlots[PPC_HOOK_SLOT_COUNT] = {{}};");
+            println("const PPCHookTarget PPCHookTargets[] = {{");
+            for (size_t i = 0; i < functions.size(); i++)
+                if (HasHookGate(functions[i]))
+                    println("\t{{ 0x{:X}, {}, __imp__{} }},", functions[i].base, i, nameOf(functions[i]));
+            println("\t{{ 0, 0, nullptr }}");
+            println("}};");
+            println("}}");
+        }
 
         SaveCurrentOutData("ppc_func_mapping.cpp");
     }
@@ -2701,6 +2769,7 @@ void Recompiler::Recompile(const std::filesystem::path& headerFilePath)
         if ((i % 2048) == 0 || (i == (functions.size() - 1)))
             fmt::println("Recompiling functions... {}%", static_cast<float>(i + 1) / functions.size() * 100.0f);
 
+        currentOrdinal = i;
         Recompile(functions[i]);
     }
 

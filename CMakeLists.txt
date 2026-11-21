@@ -28,6 +28,8 @@ set(AC6_XENON "${CMAKE_CURRENT_SOURCE_DIR}/tools/XenonRecomp")
 # --- The third-party code fetched at configure time, and the game's code recompiled -------
 include(tools/cmake/fetch_thirdparty.cmake)
 include(tools/cmake/recompile.cmake)
+# LuaJIT, for the mods' Lua scripts (GracemeriaRecomp/src/mods): lua51.dll / libluajit-5.1.so next to the executable.
+include(tools/cmake/luajit.cmake)
 
 # --- Recompiled game code (GracemeriaRecompLib/CMakeLists.txt) -----------------------------------------
 add_subdirectory(GracemeriaRecompLib)
@@ -175,6 +177,24 @@ add_custom_command(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/gen_imports.cmake"
     DEPENDS "${AC6_LIB_ROOT}/ppc/ppc_recomp_shared.h" "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/gen_imports.cmake"
     COMMENT "Generating import stubs"
+    VERBATIM
+)
+
+# --- The Lua mods' API script (GracemeriaRecomp/src/mods/lua/ac6.lua), embedded ---------------------
+set(AC6_MODS_LUA_GEN "${CMAKE_CURRENT_BINARY_DIR}/generated/mods_lua_api.cpp")
+add_custom_command(
+    OUTPUT "${AC6_MODS_LUA_GEN}"
+    COMMAND "${CMAKE_COMMAND}" -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/GracemeriaRecomp/src/mods/lua/ac6.lua -DOUTPUT=${AC6_MODS_LUA_GEN} -DSYMBOL=kModsLuaApi -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/embed_text.cmake
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/GracemeriaRecomp/src/mods/lua/ac6.lua" "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/embed_text.cmake"
+    COMMENT "Embedding the Lua mods' API script"
+    VERBATIM
+)
+set(AC6_MODS_SYMBOLS_GEN "${CMAKE_CURRENT_BINARY_DIR}/generated/mods_symbols.cpp")
+add_custom_command(
+    OUTPUT "${AC6_MODS_SYMBOLS_GEN}"
+    COMMAND "${CMAKE_COMMAND}" -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/GracemeriaRecomp/src/mods/symbols.toml -DOUTPUT=${AC6_MODS_SYMBOLS_GEN} -DSYMBOL=kModsSymbols -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/embed_text.cmake
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/GracemeriaRecomp/src/mods/symbols.toml" "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/embed_text.cmake"
+    COMMENT "Embedding the Lua mods' built-in symbols"
     VERBATIM
 )
 
@@ -368,6 +388,11 @@ add_library(ac6_runtime OBJECT
     GracemeriaRecomp/src/game/kbm_heartbeat.cpp
     GracemeriaRecomp/src/game/flight_input.cpp
     GracemeriaRecomp/src/plugin/plugins.cpp
+    GracemeriaRecomp/src/mods/hooks.cpp
+    GracemeriaRecomp/src/mods/mods.cpp
+    GracemeriaRecomp/src/mods/rtti.cpp
+    "${AC6_MODS_LUA_GEN}"
+    "${AC6_MODS_SYMBOLS_GEN}"
     GracemeriaRecomp/src/kernel/clock.cpp
     GracemeriaRecomp/src/kernel/dispatcher.cpp
     GracemeriaRecomp/src/kernel/imports_file.cpp
@@ -406,7 +431,8 @@ if (AC6_RELEASE)
     list(APPEND AC6_UPDATER_DEFINITIONS "AC6_RELEASE=1")
 endif()
 set_source_files_properties(GracemeriaRecomp/src/update/updater.cpp PROPERTIES COMPILE_DEFINITIONS "${AC6_UPDATER_DEFINITIONS}")
-target_link_libraries(ac6_runtime PUBLIC AC6RecompLib ac6_xenonutils ac6_o1heap ac6_plume ac6_ffx SDL3::SDL3-static ac6_ffmpeg ac6_imgui)
+target_link_libraries(ac6_runtime PUBLIC AC6RecompLib ac6_xenonutils ac6_o1heap ac6_plume ac6_ffx SDL3::SDL3-static ac6_ffmpeg ac6_imgui luajit)
+add_dependencies(ac6_runtime luajit_jit_modules)
 if (WIN32)
     target_link_libraries(ac6_runtime PUBLIC winmm synchronization bcrypt dxgi winhttp)   # dxgi: the log's GPU list (system_info.cpp), winhttp: updates
 else()
@@ -459,12 +485,45 @@ foreach(exe ac6 ac6_release)
     if (WIN32)
         # Recompiled code nests deeply on the host stack: 16 MB reserve for every thread (main + CreateThread default).
         target_link_options(${exe} PRIVATE -Wl,--stack,16777216)
+    else()
+        # libluajit-5.1.so sits next to the executable (tools/cmake/luajit.cmake): found there wherever the game is put,
+        # not at the build tree's absolute path (CMake's default build RPATH).
+        set_target_properties(${exe} PROPERTIES BUILD_RPATH "\$ORIGIN")
     endif()
     # (Linux: the threads' 16 MB are set at startup, main.cpp and platform/platform_linux.cpp.)
 endforeach()
 
 # --- Plugins: native mods, mods/<mod>/<name>.dll, built on their own against GracemeriaRecomp/src/plugin/ac6_plugin.h
 # only. PSM (post-stall manoeuvres) has its own repository.
+
+# --- The example Lua mods (examples/mods): each assembled, with its native module, in build/example_mods/<mod>, ready to
+# copy into mods/ next to the game (they aren't installed there: the build doesn't change the game's mods).
+set(AC6_EXAMPLE_MODS "${CMAKE_BINARY_DIR}/example_mods")
+# (subdir: where in the mod's folder the DLL goes: bin for a Lua mod's module, "." for a plugin.)
+function(ac6_example_native target mod name subdir)
+    set_target_properties(${target} PROPERTIES OUTPUT_NAME ${name} PREFIX ""
+        RUNTIME_OUTPUT_DIRECTORY "${AC6_EXAMPLE_MODS}/${mod}/${subdir}" LIBRARY_OUTPUT_DIRECTORY "${AC6_EXAMPLE_MODS}/${mod}/${subdir}")
+    target_include_directories(${target} PRIVATE GracemeriaRecomp/src/mods)
+    target_compile_options(${target} PRIVATE -Wall -Wno-unused-function)
+    if (WIN32)
+        target_link_options(${target} PRIVATE -static)   # self-contained: libc++ inside the DLL
+    endif()
+endfunction()
+add_library(ac6_example_aircraft_slots SHARED examples/mods/aircraft_slots/native/aircraft_slots.cpp)
+target_include_directories(ac6_example_aircraft_slots SYSTEM PRIVATE tools/XenonRecomp/thirdparty/tomlplusplus/include)
+ac6_example_native(ac6_example_aircraft_slots aircraft_slots aircraft_slots ".")   # a plugin
+set(AC6_EXAMPLE_MOD_NAMES aircraft_list aircraft_slots input_display)
+set(AC6_EXAMPLE_MOD_COPIES "")
+foreach (mod ${AC6_EXAMPLE_MOD_NAMES})
+    file(GLOB_RECURSE files CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/mods/${mod}/*")
+    set(stamp "${AC6_EXAMPLE_MODS}/${mod}/.copied")
+    add_custom_command(OUTPUT "${stamp}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/examples/mods/${mod}" "${AC6_EXAMPLE_MODS}/${mod}"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
+        DEPENDS ${files} COMMENT "Example mod ${mod}" VERBATIM)
+    list(APPEND AC6_EXAMPLE_MOD_COPIES "${stamp}")
+endforeach()
+add_custom_target(ac6_example_mods ALL DEPENDS ${AC6_EXAMPLE_MOD_COPIES} ac6_example_aircraft_slots)
 
 # --- shadertest: differential test of the shader translator (tools/shadertest) -------------------
 # Windows only: it compiles through DXC's library (gpu/dxc.cpp). Built only when tools/shadertest is present.

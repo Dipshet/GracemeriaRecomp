@@ -64,6 +64,13 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
                 contextRegisterFunctions.insert(*entry.value<uint32_t>());
         }
 
+        hookGates = main["hook_gates"].value_or(false);
+        if (auto excludeArray = main["hook_gate_exclude"].as_array())
+        {
+            for (auto& entry : *excludeArray)
+                hookGateExclude.insert(*entry.value<uint32_t>());
+        }
+
         if (auto invalidArray = main["invalid_instructions"].as_array())
         {
             for (auto& instr : *invalidArray)

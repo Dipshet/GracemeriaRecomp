@@ -31,6 +31,12 @@ savevmx_64_address   = 0x823851E4
 longjmp_address = 0x823CA690
 setjmp_address  = 0x823CA9B0
 
+# Hook gates (AC6, tools/XenonRecomp): every function checks a slot of its own on entry, so mods can hook any function at
+# runtime (GracemeriaRecomp/src/mods/hooks.h). An unhooked function pays a load and a branch. hook_gate_exclude lists
+# functions to leave without a gate.
+hook_gates = true
+hook_gate_exclude = []
+
 # Functions with an exception handler (.pdata ExceptionFlag) are preceded by 8 bytes of data:
 # the handler address and its scope table. Skip them so the linear sweep doesn't decode them
 # as code and spawn bogus overlapping functions.

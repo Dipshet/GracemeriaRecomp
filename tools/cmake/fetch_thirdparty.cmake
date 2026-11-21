@@ -78,3 +78,5 @@ ac6_fetch("${AC6_TP}/FidelityFX-SDK" https://github.com/GPUOpen-LibrariesAndSDKs
     c6efa6bf7f2027b3ec94f28578bb5965eabb9e55 TAG v1.1.4 PATCH "${CMAKE_CURRENT_SOURCE_DIR}/tools/patches/fidelityfx-ac6.patch")
 ac6_fetch("${AC6_TP}/SDL" https://github.com/libsdl-org/SDL.git 829a65d769d935c4852f8159e964312c0957260a TAG release-3.4.18)
 ac6_fetch("${AC6_TP}/imgui" https://github.com/ocornut/imgui.git c1aaac65e896a45f81f47a4d68f9959e0f86c859 TAG v1.93.0)
+# LuaJIT: a rolling release (no tags), the v2.1 branch's commit of 2026-10-30. Built by tools/cmake/luajit.cmake.
+ac6_fetch("${AC6_TP}/LuaJIT" https://github.com/LuaJIT/LuaJIT.git ea9eb7edb5eac4a9d175d74523db34fac0fa5180)

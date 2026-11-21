@@ -10,6 +10,7 @@
 #include "kernel/function.h"
 #include "log.h"
 #include "memory.h"
+#include "mods/mods.h"
 
 #include <algorithm>
 #include <atomic>
@@ -278,6 +279,7 @@ PPC_FUNC(sub_821F03B0)
     __imp__sub_821F03B0(ctx, base);
     ac6::gpu::SetSwapWait(false);
     ac6::gpu::RendererPresent(paced);
+    ac6::mods::OnFrame();   // the Lua mods' frame event (on the game's main thread, game calls allowed)
     // The settings overlay holds the game while it is open. The frame clock skips that time: CNuTimer::advance's next
     // delta is measured from the previous frame's tick (g_last_frame_tick), moved on by it.
     if (const uint64_t held = ac6::gpu::RendererHoldForOverlay())

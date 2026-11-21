@@ -502,6 +502,23 @@ void LatchHeld()
 
 } // namespace
 
+bool KeyCodes(std::string_view name, std::vector<uint32_t>& out)
+{
+    std::vector<Key> keys;
+    if (!ParseKey(name, keys))
+        return false;
+    for (const Key& k : keys)
+    {
+        if (k.kind == Key::Scancode)
+            out.push_back(k.code);
+        else if (k.kind == Key::Mouse)
+            out.push_back(kMouseCode + k.code);
+        else
+            return false;   // (the wheel)
+    }
+    return true;
+}
+
 // ---- The settings overlay's view of the bindings ---------------------------------------------
 
 std::vector<BindingAction> BindingActions()

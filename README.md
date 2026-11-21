@@ -3,7 +3,7 @@
 <p align="center">
     <a href="https://github.com/Dipshet/GracemeriaRecomp/releases/latest"><b>Download</b></a>
     ·
-    <a href="https://github.com/Dipshet/GracemeriaRecomp"><b>Modding Guide</b></a>
+    <a href="docs/modding/lua.md"><b>Modding Guide</b></a>
 </p>
 
 ---
@@ -75,7 +75,7 @@ port's runtime are adapted.
 | **Optional effects** | Planar reflections on water<br>Enhanced bloom<br>Ambient occlusion (XeGTAO)<br>Object motion blur<br>Film grain, vignette and chromatic aberration<br>Sharper character shadows in cutscenes |
 | **Controls** | DualSense adaptive triggers, similar to Ace Combat 8<br>Flight sticks and HOTAS: any device's axes and buttons bound to the game's controls, each axis with its own curve and dead zone<br>Keyboard and mouse controls in the style of Ace Combat 7, with mouse steering |
 | **Languages** | English and Japanese sub and dub<br>German, French, Spanish, and Italian sub |
-| **Mod support** | Mods go in a `mods` folder next to the game<br>**Textures:** replace any texture with your own, at any resolution. The overlay's texture browser can display and dump any texture that is shown in the frame.<br>**Game files:** replace any of the game's data files.<br>**Plugins:** native code that hooks the game, for example the [PSM mod](https://github.com/Dipshet/GracemeriaRecomp) |
+| **Mod support** | Mods go in a `mods` folder next to the game<br>**Textures:** replace any texture with your own, at any resolution. The overlay's texture browser can display and dump any texture that is shown in the frame.<br>**Game files:** replace any of the game's data files.<br>**Lua mods:** scripts that hook any of the game's functions, read and write its memory, call it, read the controllers, keyboard and mouse, and draw over the picture ([guide](docs/modding/lua.md), [examples](examples/mods))<br>**Plugins:** native code that hooks any of the game's functions, for example the [PSM mod](https://github.com/Dipshet/GracemeriaRecomp) |
 | **Self Update** | The game checks for a newer version at start and installs it from the overlay's Game tab. |
 
 ## Controls
@@ -185,7 +185,9 @@ downloads it into `toolchain/sniper` (1.2 GB) and prints its path, then
 |-|-|
 | `GracemeriaRecomp` | The runtime: the stand-in for the console (kernel, memory, threads, files, audio, input), the Vulkan renderer, the settings overlay, mods and language packs |
 | `GracemeriaRecompLib` | The recompiled game code: XenonRecomp's config (`config`) and the C++ it writes (`ppc`, made by the build) |
-| `tools` | XenonRecomp (adapted for this port), XexDump, the build's CMake scripts, the patches to the FidelityFX SDK and FFmpeg |
+| `tools` | XenonRecomp (adapted for this port), XexDump, the build's CMake scripts, the patches to the FidelityFX SDK and FFmpeg, an IDA script that exports symbols for mods |
+| `docs` | The modding guide |
+| `examples` | Example mods (Lua, and a native plugin), built into `build/example_mods` |
 | `thirdparty` | The libraries the runtime uses (`thirdparty/README.md` lists versions, licences and changes) |
 | `toolchain` | The toolchain's download script and compiler settings |
 
@@ -199,7 +201,8 @@ downloads it into `toolchain/sniper` (1.2 GB) and prints its path, then
 - [SDL](https://github.com/libsdl-org/SDL), [FFmpeg](https://ffmpeg.org) (XMA and WMA Pro audio),
   [Dear ImGui](https://github.com/ocornut/imgui) (the overlay), [AMD FidelityFX](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK)
   (FSR 3.1), [XeGTAO](https://github.com/GameTechDev/XeGTAO), [SMAA](https://github.com/iryoku/smaa),
-  [RenoDX](https://github.com/clshortfuse/renodx) (HDR tone mappers), [o1heap](https://github.com/pavel-kirienko/o1heap),
+  [RenoDX](https://github.com/clshortfuse/renodx) (HDR tone mappers), [LuaJIT](https://luajit.org) (Lua mods),
+  [o1heap](https://github.com/pavel-kirienko/o1heap),
   [xxHash](https://github.com/Cyan4973/xxHash) and the [Share Tech](https://fonts.google.com/specimen/Share+Tech) fonts
 
 ## Licence

@@ -4,10 +4,14 @@
 //
 //     extern "C" AC6_PLUGIN_EXPORT bool ac6_plugin_init(const ac6::plugin::Api* api);
 //
-// and, from it, registers hooks on the game's functions the runtime offers (Hookable below) and handlers for its events.
+// and, from it, registers hooks on the game's functions and handlers for its events.
 // Returning false declines: the plugin is unloaded, with the hooks and handlers it registered.
 // A hook runs in place of the game's function: it reads and sets the call's registers and runs the game's own through
-// `original` (or not). Guest memory is big-endian, at api->guest_base + address (the helpers below).
+// `original` (or not). Any of the game's functions can be hooked (by its start address: the runtime's hook gates,
+// GracemeriaRecomp/src/mods/hooks.h), Hookable below names a few, and several plugins and mods can hook the same one:
+// `original` then runs the next hook in its chain, the game's function after the last. (A build without hook gates
+// offers only the Hookable functions, one plugin each.)
+// Guest memory is big-endian, at api->guest_base + address (the helpers below).
 //
 // Native code: a plugin can crash or harm the game and the machine like any program. Run only plugins you trust.
 // AC6_PLUGINS=0 loads none. This header is the whole interface: plugins don't link against the runtime.
@@ -58,7 +62,8 @@ struct Api
     double (*f)(Call* call, int n);
     void (*set_f)(Call* call, int n, double value);
     void (*original)(Call* call);   // the game's function, on the call's registers as they are now
-    // false: not a Hookable address, or another plugin has it.
+    // false: not the start of one of the game's functions (without hook gates: not a Hookable address, or another
+    // plugin has it).
     bool (*hook)(uint32_t function, Hook hook);
     void (*on_event)(EventHandler handler);
     // A setting or AC6_* variable as the runtime reads it (the settings overlay's value, ac6_settings.toml's [env], the
