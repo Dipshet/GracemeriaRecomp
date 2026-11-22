@@ -789,3 +789,12 @@ registers = []
 name = "HudPipLabelBegin"
 address = 0x8223E2BC
 registers = []
+
+# The mission manager's damage report (sub_82269248) offline: a damage record naming a unit that is gone skips the
+# report, just like online (GracemeriaRecomp/src/game/damage_report_guard.cpp). At the offline branch's target, 
+# after the online path's own checks of the two units (r27, r26).
+[[midasm_hook]]
+name = "DamageReportUnitGone"
+address = 0x822692C4
+registers = ["r26", "r27"]
+jump_address_on_true = 0x822695DC
