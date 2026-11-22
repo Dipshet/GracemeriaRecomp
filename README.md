@@ -40,7 +40,7 @@ European and Japanese releases are **not supported**.
 |-|-|-|
 | **Operating system** | Windows 10 or 11, 64-bit | A modern 64-bit distro |
 | **CPU** | AVX2: Intel Haswell (4th generation Core, 2013) or newer, AMD Excavator (2015) or Ryzen<br>Older CPUs with SSE4.2: the compatibility build | AVX2: Intel Haswell (4th generation Core, 2013) or newer, AMD Excavator (2015) or Ryzen |
-| **GPU** | NVIDIA or AMD, with a Vulkan 1.2 driver<br>Intel GPUs are **not supported** for now (see [Known Issues](#known-issues)) | NVIDIA, AMD or Intel, with a Vulkan 1.2 driver<br>Intel: 6th generation Core (Skylake, 2015) or newer |
+| **GPU** | NVIDIA, AMD, or Intel with a Vulkan 1.2 driver<br>Intel: 6th generation Core (Skylake, 2015) or newer | NVIDIA, AMD, or Intel with a Vulkan 1.2 driver<br>Intel: 6th generation Core (Skylake, 2015) or newer |
 
 > [!WARNING]
 > If your CPU doesn't support AVX2, you must download the compatibility release (the file ending in
@@ -133,8 +133,7 @@ slower, but the log then names the draw where the graphics card fails. Reproduce
 `ac6_runtime.log`.
 
 - **Only the North American release** is supported.
-- **Intel GPUs on Windows:** the game crashes when the first mission or the tutorial starts. 
-Workaround: play the Linux release on Linux, where Intel GPUs work with Mesa's driver.
+- **European languages:** Languages are mixed and button glyphs are drawn above texts.
 - **Old AMD drivers (before 2022):** in the cockpit view, the canopy can show through the instrument panel. Turn
   Dynamic rendering off (Debug tab, Graphics driver).
 - **DualSense adaptive triggers on Linux** may need access to the controller's hidraw device (Steam's or
