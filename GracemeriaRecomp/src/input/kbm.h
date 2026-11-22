@@ -22,6 +22,9 @@ void Apply(PadState& pad);               // main thread, once per frame: player 
 void Release();                          // main thread, instead of Apply while the settings overlay is open: the cursor back
 void NotifyFlightStep();                 // any thread: the player's flight model ticked
 bool InFlight();                         // it ticked within the last 300 ms (flight: not menus, pause, cutscenes)
+void NotifyHangarDisplay();              // any thread: the hangar's display (the aircraft select's X) updated
+bool InHangarDisplay();                  // within the last 300 ms: the pad moves the shown aircraft as in flight
+bool FlightControls();                   // InFlight() or InHangarDisplay(): the flight bindings apply
 
 // The bindings as the settings overlay edits them. Key names are the file's ("Mouse1", "LeftControl").
 struct BindingAction

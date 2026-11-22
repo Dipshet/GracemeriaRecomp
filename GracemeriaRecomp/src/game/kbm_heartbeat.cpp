@@ -7,8 +7,10 @@
 //    while parked ([fm+332] & 0x80 steps neither force step): only for the player's flight model.
 //  - 0x82233208: the player actor's ground-state maintainer (its only caller is the player driver 0x82233FB0).
 //  - 0x82191AE8: a timed gauge on the player's input block, not flight control: a secondary signal.
+// And the hangar's display (below), where the pad moves the shown aircraft as in flight.
 #include "endian.h"
 #include "input/kbm.h"
+#include "log.h"
 #include "memory.h"
 #include "ppc.h"
 
@@ -53,3 +55,20 @@ AC6_FLIGHT_BEAT_PLAYER(82306620)
 AC6_FLIGHT_BEAT_PLAYER(82329488)
 AC6_FLIGHT_BEAT(82233208)
 AC6_FLIGHT_BEAT(82191AE8)
+
+// The hangar's display (the aircraft select's X): CSelectAircraftManager state 2 ([mgr+0x8C90], its slot 24). Slot 38
+// (0x82148BC8, r3 = the manager) runs every scene update and moves the control surfaces from the pad in that state only.
+extern "C" PPC_FUNC(__imp__sub_82148BC8);
+PPC_FUNC(sub_82148BC8)
+{
+    const uint32_t state = U32(ctx.r3.u32 ? ctx.r3.u32 + 0x8C90 : 0);
+    static uint32_t logged = UINT32_MAX;
+    if (state != logged)
+    {
+        logged = state;
+        ac6::log::Info("Hangar: state {}", state);
+    }
+    if (state == 2)
+        ac6::input::kbm::NotifyHangarDisplay();
+    __imp__sub_82148BC8(ctx, base);
+}

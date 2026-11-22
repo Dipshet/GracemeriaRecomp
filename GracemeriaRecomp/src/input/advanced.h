@@ -3,9 +3,12 @@
 // axes, buttons and hats, each axis tuned (dead zone, full deflection, curve, invert). The settings overlay's Advanced
 // controls tab edits the bindings ([advanced_bindings] in ac6_settings.toml) and the tuning ([advanced_controls]).
 //
-// On with the tab's first row (AC6_CUSTOM_FLIGHT, which also gives partial yaw: game/flight_input.cpp), and only in
-// flight: menus, pauses and cutscenes have the pad as the game has it. An action without bindings stays the game's. A pad
-// input that is bound is the bindings' only (the game doesn't see it in flight). The keyboard and mouse are unchanged.
+// On with the tab's first row (AC6_CUSTOM_FLIGHT, which also gives partial yaw: game/flight_input.cpp). The flight
+// actions are for flight and the hangar's display (the aircraft select's X, where the pad moves the shown aircraft as
+// in flight). Outside them (menus, pauses, cutscenes) the pad is as the game has it, and the MENUS actions and the flight
+// button actions bound on a joystick press their pad buttons (so a flight stick alone gets through the menus). The
+// MENUS actions work in the hangar's display too. An action without bindings stays the game's. A pad input that is bound is the bindings' only in flight (the
+// game doesn't see it there). The keyboard and mouse are unchanged.
 #include <cstdint>
 #include <map>
 #include <string>

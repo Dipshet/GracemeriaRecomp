@@ -171,6 +171,10 @@ std::vector<Action> MenuActions()
         { "cancel", { kB }, { "Escape", "Backspace", "Mouse2" } },
         { "start", { kStart }, { "Enter" } },
         { "back", { kBack }, { "Tab" } },
+        { "x", { kX }, { "R" } },
+        { "y", { kY }, { "F" } },
+        { "previous", { kLeftShoulder }, { "Q" } },
+        { "next", { kRightShoulder }, { "E" } },
     };
 }
 
@@ -477,6 +481,15 @@ bool FlightActive()
     return NowMs() - s_flightBeat.load(std::memory_order_relaxed) < 300;
 }
 
+// The hangar's display: the shown aircraft's control surfaces, airbrakes, rudder and weapon bay move with the pad as in
+// flight, so the flight keys apply there.
+std::atomic<int64_t> s_displayBeat{ 0 };
+
+bool DisplayActive()
+{
+    return NowMs() - s_displayBeat.load(std::memory_order_relaxed) < 300;
+}
+
 // ---- Mouse --------------------------------------------------------------------------------------------------------
 SDL_Window* s_window = nullptr;
 float s_mouseDX = 0.0f, s_mouseDY = 0.0f;   // relative motion since the last update
@@ -664,6 +677,21 @@ bool InFlight()
     return FlightActive();
 }
 
+void NotifyHangarDisplay()
+{
+    s_displayBeat.store(NowMs(), std::memory_order_relaxed);
+}
+
+bool InHangarDisplay()
+{
+    return DisplayActive();
+}
+
+bool FlightControls()
+{
+    return FlightActive() || DisplayActive();
+}
+
 bool Enabled()
 {
     static const bool enabled = [] { const char* v = std::getenv("AC6_KBM"); return v && *v == '1'; }();
@@ -763,7 +791,7 @@ void Apply(PadState& pad)
     // 300 ms (a loading stall) misses it once, and switching sets there and back would latch every key held through it.
     static bool wasFlying = false;
     static uint32_t missed = 0;
-    missed = FlightActive() ? 0 : missed + 1;
+    missed = FlightControls() ? 0 : missed + 1;
     const bool flying = wasFlying ? missed < 10 : missed == 0;
     if (flying != wasFlying)
     {

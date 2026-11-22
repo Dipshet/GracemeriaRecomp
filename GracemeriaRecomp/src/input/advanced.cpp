@@ -78,7 +78,22 @@ const std::vector<Action> kActions = {
     { "wingman_left", "Filter map operations (left)", "OTHER", Kind::Button, "Controller: d-pad left" },
     { "wingman_right", "Filter map operations (right)", "OTHER", Kind::Button, "Controller: d-pad right" },
     { "gear", "Landing gear", "OTHER", Kind::Button, "Controller: the left stick's click" },
+    { "menu_up", "Menu up", "MENUS", Kind::Button, "In menus, pauses, cutscenes and the hangar's display\nController: d-pad up" },
+    { "menu_down", "Menu down", "MENUS", Kind::Button, "In menus, pauses, cutscenes and the hangar's display\nController: d-pad down" },
+    { "menu_left", "Menu left", "MENUS", Kind::Button, "In menus, pauses, cutscenes and the hangar's display\nController: d-pad left" },
+    { "menu_right", "Menu right", "MENUS", Kind::Button, "In menus, pauses, cutscenes and the hangar's display\nController: d-pad right" },
+    { "menu_confirm", "Confirm", "MENUS", Kind::Button, "In menus, pauses, cutscenes and the hangar's display\nController: A" },
+    { "menu_back", "Back", "MENUS", Kind::Button, "In menus, pauses, cutscenes and the hangar's display\nController: B" },
+    { "menu_x", "Button X", "MENUS", Kind::Button, "In menus, pauses, cutscenes and the hangar's display\nController: X (the hangar's display)" },
+    { "menu_y", "Button Y", "MENUS", Kind::Button, "In menus, pauses, cutscenes and the hangar's display\nController: Y (the hangar's description and zoom in)" },
+    { "menu_previous", "Previous page", "MENUS", Kind::Button, "In menus, pauses, cutscenes and the hangar's display\nController: LB" },
+    { "menu_next", "Next page", "MENUS", Kind::Button, "In menus, pauses, cutscenes and the hangar's display\nController: RB" },
 };
+
+bool IsMenuAction(std::string_view action)
+{
+    return action.starts_with("menu_");
+}
 
 // The buttons the button actions press on the pad.
 uint16_t PadButtonOf(std::string_view action)
@@ -87,6 +102,8 @@ uint16_t PadButtonOf(std::string_view action)
         { "change_view", kRightThumb }, { "fire_machine_gun", kA }, { "fire_missile", kB }, { "change_weapon", kBack },
         { "switch_targets", kY }, { "switch_radar_map", kX }, { "pause", kStart }, { "wingman_up", kDpadUp },
         { "wingman_down", kDpadDown }, { "wingman_left", kDpadLeft }, { "wingman_right", kDpadRight }, { "gear", kLeftThumb },
+        { "menu_up", kDpadUp }, { "menu_down", kDpadDown }, { "menu_left", kDpadLeft }, { "menu_right", kDpadRight },
+        { "menu_confirm", kA }, { "menu_back", kB }, { "menu_x", kX }, { "menu_y", kY }, { "menu_previous", kLeftShoulder }, { "menu_next", kRightShoulder },
     };
     for (const auto& m : kMap)
         if (m.name == action)
@@ -467,7 +484,8 @@ static_assert(std::size(s_values) >= 32);
 struct Frame
 {
     float pitch = 0, roll = 0, yawLeft = 0, yawRight = 0, thrust = 0, brake = 0, lookX = 0, lookY = 0;
-    uint16_t buttons = 0;
+    uint16_t buttons = 0;       // in flight: the flight button actions'
+    uint16_t menuButtons = 0;   // outside flight: the menu actions', and the flight button actions' pressed on a joystick
     bool any = false;   // an action has a binding
 };
 
@@ -475,6 +493,7 @@ Frame Evaluate(SDL_Gamepad* pad)
 {
     const Tuning& t = Tuned();
     Frame f;
+    std::array<bool, std::size(s_values)> onStick{};   // a button action pressed by a joystick's input (not the pad's)
     auto value = [&](size_t i) { return s_values[i]; };
     for (size_t i = 0; i < s_bound.size(); i++)
     {
@@ -489,6 +508,7 @@ Frame Evaluate(SDL_Gamepad* pad)
             if (!Raw(in, pad, raw))
                 continue;
             f.any = true;
+            const bool stick = in.type != Input::PadButton && in.type != Input::PadAxis;
             if (b.action->kind == Kind::Axis)
             {
                 const float a = AsAxis(in, raw);
@@ -500,7 +520,10 @@ Frame Evaluate(SDL_Gamepad* pad)
             {
                 const float h = AsHalf(in, raw);
                 if (b.action->kind == Kind::Button)
+                {
                     pressed = pressed || h > 0.5f;
+                    onStick[i] = onStick[i] || (h > 0.5f && stick);
+                }
                 else
                     v = std::max(v, lever ? h : IsAxis(in) ? Shape(h, tune) : h);
             }
@@ -540,15 +563,25 @@ Frame Evaluate(SDL_Gamepad* pad)
     if (get("autopilot") > 0.5f)
         f.yawLeft = f.yawRight = 1.0f;
     // (The bound button actions are what they say whatever the game's control scheme. The pad's buttons for them
-    // are Type-A's. Under Type-B X and Back trade places.)
+    // are Type-A's. Under Type-B X and Back trade places.) Outside flight the menu actions press theirs, and so do the
+    // flight button actions pressed on a joystick (a flight stick's fire button is A in the menus as on the controller):
+    // a pad's bound buttons are the pad's own there already.
     const bool typeB = TypeB();
     for (size_t i = 0; i < s_bound.size(); i++)
         if (s_bound[i].action->kind == Kind::Button && value(i) > 0.5f)
         {
-            uint16_t bit = PadButtonOf(s_bound[i].action->name);
+            const std::string_view name = s_bound[i].action->name;
+            uint16_t bit = PadButtonOf(name);
+            if (IsMenuAction(name))
+            {
+                f.menuButtons |= bit;
+                continue;
+            }
             if (typeB && (bit == kX || bit == kBack))
                 bit = bit == kX ? kBack : kX;
             f.buttons |= bit;
+            if (onStick[i])
+                f.menuButtons |= bit;
         }
     return f;
 }
@@ -810,11 +843,15 @@ void Add(SDL_Gamepad* pad, PadState& state, bool flying, bool held)
             for (const Device& d : s_devices)
                 for (int a = 0; a < std::min(4, SDL_GetNumJoystickAxes(d.joystick)); a++)
                     axes += std::format(" {:.2f}", SDL_GetJoystickAxis(d.joystick, a) / 32767.0f);
-            log::Info("Advanced trace: flying {} masked {} any {} | pitch {:.3f} roll {:.3f} yaw {:.3f}/{:.3f} thrust {:.3f} brake {:.3f} "
-                "look {:.2f} {:.2f} buttons {:04X} | axes{}", flying, s_masked, f.any, f.pitch, f.roll, f.yawLeft, f.yawRight, f.thrust,
-                f.brake, f.lookX, f.lookY, f.buttons, axes);
+            log::Info("Advanced trace: on {} flying {} masked {} any {} | pitch {:.3f} roll {:.3f} yaw {:.3f}/{:.3f} thrust {:.3f} brake {:.3f} "
+                "look {:.2f} {:.2f} buttons {:04X} menu {:04X} | axes{}", Enabled(), flying, s_masked, f.any, f.pitch, f.roll, f.yawLeft, f.yawRight,
+                f.thrust, f.brake, f.lookX, f.lookY, f.buttons, f.menuButtons, axes);
         }
     }
+    // Outside flight (menus, pauses, cutscenes), and in the hangar's display with the flight bindings (its X / Y / A
+    // are the menus'): the menu buttons into the pad.
+    if (Enabled() && (!flying || kbm::InHangarDisplay()) && !held)
+        state.buttons |= f.menuButtons;
     Flight out;
     out.active = s_masked && f.any;
     out.passButtons = state.buttons;

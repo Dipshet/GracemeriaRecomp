@@ -599,8 +599,8 @@ void Update()
     next[0] = slots[s_active];
     // Player 1 is always connected: the keyboard (and the macro) drive it even without a controller.
     next[0].connected = true;
-    // Advanced controls: in flight, the controller's bound inputs out, then the bindings' in.
-    const bool flying = kbm::InFlight();
+    // Advanced controls: in flight (and the hangar's display), the controller's bound inputs out, then the bindings' in.
+    const bool flying = kbm::FlightControls();
     advanced::Mask(ActivePad(), next[0], flying, s_held);
     // The keyboard and mouse (input/kbm.cpp, AC6_KBM=1), or the fixed keyboard map. Apply also hides the idle cursor.
     if (s_held)

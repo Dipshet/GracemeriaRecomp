@@ -1046,8 +1046,7 @@ struct BindingInfo
     const char* group;
     const char* pad;     // what it is on the controller
 };
-// The flight keys only: the menus' (up, down, confirm, ...) aren't listed (the settings
-// file's [menu_keys] still sets them).
+// The flight keys, then the menus'.
 const BindingInfo kBindingInfo[] = {
     { "flight", "pitch_up", "Pitch up", "FLIGHT", "the left stick down (nose up)" },
     { "flight", "pitch_down", "Pitch down", "FLIGHT", "the left stick up (nose down)" },
@@ -1076,6 +1075,18 @@ const BindingInfo kBindingInfo[] = {
     { "flight", "wingman_left", "Filter map operations (left)", "OTHER", "the d-pad left" },
     { "flight", "wingman_right", "Filter map operations (right)", "OTHER", "the d-pad right" },
     { "flight", "gear", "Landing gear", "OTHER", "the left stick's click" },
+    { "menu", "up", "Up", "MENUS", "the d-pad up" },
+    { "menu", "down", "Down", "MENUS", "the d-pad down" },
+    { "menu", "left", "Left", "MENUS", "the d-pad left" },
+    { "menu", "right", "Right", "MENUS", "the d-pad right" },
+    { "menu", "confirm", "Confirm", "MENUS", "A" },
+    { "menu", "cancel", "Cancel", "MENUS", "B" },
+    { "menu", "start", "Start", "MENUS", "Start" },
+    { "menu", "back", "Back", "MENUS", "Back" },
+    { "menu", "x", "Button X", "MENUS", "X (the hangar's display)" },
+    { "menu", "y", "Button Y", "MENUS", "Y (the hangar's description and zoom in)" },
+    { "menu", "previous", "Previous page", "MENUS", "LB" },
+    { "menu", "next", "Next page", "MENUS", "RB" },
 };
 constexpr size_t kMaxBindingKeys = 4;
 
@@ -1772,7 +1783,7 @@ void BuildRows()
                     s_rows.push_back(r);
         };
         settingsOf("ADVANCED CONTROLS");
-        for (const char* group : { "PITCH", "ROLL", "YAW", "THROTTLE", "CAMERA", "WEAPONS", "OTHER" })
+        for (const char* group : { "PITCH", "ROLL", "YAW", "THROTTLE", "CAMERA", "WEAPONS", "OTHER", "MENUS" })
         {
             for (size_t i = 0; i < s_adv.size(); i++)
                 if (std::string_view(s_adv[i].action->group) == group)

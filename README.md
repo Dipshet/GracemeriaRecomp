@@ -111,6 +111,8 @@ The **mouse** steers the aircraft. Hold `Left Alt` to look around with the mouse
 | Cancel | `Escape`, `Backspace`, `Mouse2` |
 | Start | `Enter` |
 | Back | `Tab` |
+| X / Y | `R` / `F` |
+| Previous / next page (LB / RB) | `Q` / `E` |
 
 ### Hotkeys
 
