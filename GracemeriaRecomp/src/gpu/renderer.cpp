@@ -1835,7 +1835,8 @@ bool ShadowDetail()
 }
 
 // Ambient occlusion on the scene (settings graphics.ambient_occlusion, AC6_AO): off by default (not
-// the console's picture). On, Intel's XeGTAO ("1", "on", "gtao"). Live: read again when a setting changes.
+// the console's picture). Intel's XeGTAO: 1 High ("1", "on", "high", "gtao"), 2 Low ("low": its visibility at half the
+// scene's resolution). Live: read again when a setting changes.
 int AoMode()
 {
     static std::atomic<uint64_t> generation{ UINT64_MAX };
@@ -1843,7 +1844,8 @@ int AoMode()
     if (const uint64_t now = settings::Generation(); generation.load(std::memory_order_acquire) != now)
     {
         const std::string text = settings::Get("AC6_AO");
-        mode.store(text == "1" || text == "on" || text == "true" || text == "gtao" || text == "xegtao" ? 1 : 0,
+        mode.store(text == "low" ? 2 :
+            text == "1" || text == "on" || text == "true" || text == "high" || text == "gtao" || text == "xegtao" ? 1 : 0,
             std::memory_order_release);
         generation.store(now, std::memory_order_release);
     }
@@ -10440,8 +10442,9 @@ void RunAmbientOcclusion(RenderCommandList& cl, HostImage& image)
     // (XeGTAO's "sharp" and "medium"), AC6_AO_DENOISE=<0..3> sets it.
     static const int denoiseSet = std::clamp(int(envFloat("AC6_AO_DENOISE", -1.0f)), -1, 3);
     const int denoises = denoiseSet >= 0 ? denoiseSet : (TaaOn() || FsrRunning()) ? 1 : 2;
-    // AC6_AO_RES=<divisor>: XeGTAO's visibility at 1 / divisor of the scene's size on each axis (1).
-    static const uint32_t divisor = uint32_t(std::clamp(envFloat("AC6_AO_RES", 1.0f), 1.0f, 4.0f));
+    // AC6_AO_RES=<divisor>: XeGTAO's visibility at 1 / divisor of the scene's size on each axis (High 1, Low 2).
+    static const float divisorSet = envFloat("AC6_AO_RES", 0.0f);
+    const uint32_t divisor = divisorSet >= 1.0f ? uint32_t(std::min(divisorSet, 4.0f)) : mode == 2 ? 2u : 1u;
     const uint32_t w = std::max(1u, image.width / divisor), h = std::max(1u, image.height / divisor);
     constexpr float kFarthest = 1.0e6f;
 

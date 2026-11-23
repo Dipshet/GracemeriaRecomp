@@ -153,8 +153,10 @@ const Setting kSettings[] = {
       "Console renders the glow at a fixed 160 x 90 resolution\n"
       "Enhanced renders the glow at half the screen's resolution\n"
       "Default: Console" },
-    { "graphics", "ambient_occlusion", "AC6_AO", kBool, "true",
+    { "graphics", "ambient_occlusion", "AC6_AO", kText, "\"low\"",
       "Add soft shading in creases and where objects meet\n"
+      "Low shades at half the resolution, much faster on integrated graphics\n"
+      "High shades at the full resolution\n"
       "Default: Off" },
     { "graphics", "shadow_detail", "AC6_SHADOW_DETAIL", kBool, "true",
       "Sharper shadows on characters in cutscenes\n"
@@ -517,8 +519,9 @@ const Ui kUi[] = {
     { "film_grain", "Graphics", "Film grain", "", 0, 1, 0.05, "0", "EFFECTS" },
     { "vignette", "Graphics", "Vignette", "", 0, 1, 0.05, "0", "EFFECTS" },
     { "chromatic_aberration", "Graphics", "Chromatic aberration", "", 0, 1, 0.05, "0", "EFFECTS" },
-    // Off / On, off by default: not the console's picture. The Enhanced preset turns it on.
-    { "ambient_occlusion", "Graphics", "Ambient occlusion", "", 0, 0, 0, "0", "EFFECTS" },
+    // Off / Low / High, off by default: not the console's picture. The Enhanced preset sets High ("1", as the earlier
+    // On, so files from before keep it).
+    { "ambient_occlusion", "Graphics", "Ambient occlusion", "0=Off|low=Low|1=High", 0, 0, 0, "0", "EFFECTS" },
     { "shadow_detail", "Graphics", "Sharp cutscene shadows", "", 0, 0, 0, "0", "EFFECTS" },
     // Off / On, off by default, at the next start. The Enhanced preset turns it on.
     { "planar_reflection", "Graphics", "Planar reflection", "", 0, 0, 0, "0", "EFFECTS" },
