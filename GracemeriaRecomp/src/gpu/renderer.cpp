@@ -2873,6 +2873,21 @@ void Transition(RenderCommandList& cl, HostImage& image, RenderTextureLayout lay
     image.layout = layout;
 }
 
+// Two images' transitions in one barrier (a copy's source and destination: one wait instead of two).
+void Transition(RenderCommandList& cl, HostImage& a, RenderTextureLayout layoutA, HostImage& b, RenderTextureLayout layoutB)
+{
+    RenderTextureBarrier barriers[2];
+    uint32_t count = 0;
+    if (a.layout != layoutA)
+        barriers[count++] = RenderTextureBarrier(a.texture.get(), layoutA);
+    if (b.layout != layoutB && &b != &a)
+        barriers[count++] = RenderTextureBarrier(b.texture.get(), layoutB);
+    if (count)
+        cl.barriers(RenderBarrierStage::GRAPHICS | RenderBarrierStage::COPY, barriers, count);
+    a.layout = layoutA;
+    b.layout = layoutB;
+}
+
 void RetireImage(HostImage& image)
 {
     for (auto it = s_r.framebuffers.begin(); it != s_r.framebuffers.end();)
@@ -12158,8 +12173,7 @@ void ResolveImpl(uint32_t device, uint32_t flags, const ResolveRect* srcRect, ui
                 }
                 else if (!depth && scale == 1)
                 {
-                    Transition(cl, *src, RenderTextureLayout::COPY_SOURCE);
-                    Transition(cl, dst, RenderTextureLayout::COPY_DEST);
+                    Transition(cl, *src, RenderTextureLayout::COPY_SOURCE, dst, RenderTextureLayout::COPY_DEST);
                     const RenderBox box(hsx, hsy, hsx + hw, hsy + hh);
                     cl.copyTextureRegion(RenderTextureCopyLocation::Subresource(dst.texture.get()),
                         RenderTextureCopyLocation::Subresource(src->texture.get()), uint32_t(hdx), uint32_t(hdy), 0, &box);
