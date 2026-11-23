@@ -11439,8 +11439,11 @@ void RunPlanarReflection(RenderCommandList& cl, HostImage& image, const HostImag
     HostImage& depth = s_r.planarDepth;
     const uint32_t w = colour.width, h = colour.height;
     EnsureImage(s_r.planarBlur, w, h, RenderFormat::R16G16B16A16_FLOAT, false, 1, false, true);
-    EnsureImage(s_r.planarGlowAcross, w, h, RenderFormat::R16G16B16A16_FLOAT, false, 1, false, true);
-    EnsureImage(s_r.planarGlow, w, h, RenderFormat::R16G16B16A16_FLOAT, false, 1, false, true);
+    // The glow at half the size (AC6_PLANAR_GLOW_RES=1: the full size): a wide, soft blur.
+    static const uint32_t glowStep = envFloat("AC6_PLANAR_GLOW_RES", 2.0f) >= 1.5f ? 2u : 1u;
+    const uint32_t gw = (w + glowStep - 1) / glowStep, gh = (h + glowStep - 1) / glowStep;
+    EnsureImage(s_r.planarGlowAcross, gw, gh, RenderFormat::R16G16B16A16_FLOAT, false, 1, false, true);
+    EnsureImage(s_r.planarGlow, gw, gh, RenderFormat::R16G16B16A16_FLOAT, false, 1, false, true);
     EnsureImage(s_r.planarLights, w, h, RenderFormat::R16G16B16A16_FLOAT, false, 1, false, true);
     EnsureImage(s_r.seaReflection, w, h, RenderFormat::R16G16B16A16_FLOAT, false, 1, false, true);
 
@@ -11566,7 +11569,8 @@ void RunPlanarReflection(RenderCommandList& cl, HostImage& image, const HostImag
     f[51] = s_r.bloomBright[0];
     f[52] = s_r.bloomBright[1];
     f[53] = std::bit_cast<float>(s_r.planarLuminance);
-    f[54] = f[55] = 0.0f;
+    f[54] = 0.0f;
+    f[55] = float(glowStep);   // (the mirrored scene's pixels to one of the glow's)
     // The blur by height (AC6_PLANAR_ROUGHNESS=<the water's slope>, 0.04, 0: AC6_PLANAR_BLUR everywhere, and AC6_PLANAR_BLUR is
     // then the blur at the water's line, AC6_PLANAR_BLUR_MAX the most, 6): the mirrored scene's depth, and the way back
     // from its clip space to the world (the mirrored camera with the oblique near plane, inverted).

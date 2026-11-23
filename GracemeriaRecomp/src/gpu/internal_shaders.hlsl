@@ -677,9 +677,9 @@ float3 PlanarDecode(float3 c, bool floatScene)
 }
 
 // What the game's bright pass takes of a value (as the enhanced bloom's BLOOM_BRIGHT): x the exposure (from the adapted
-// luminance and the band, tune4.yz, the luminance image tune5.y, none: 1), x (1 - threshold / luminance) (tune4.w),
-// then x / (x + offset) (tune5.x), and back in the scene's values (/ the exposure).
-float3 PlanarBright(float3 x, float4 tune4, float4 tune5)
+// luminance and the band, tune4.yz, the luminance image tune5.y, none: 1: PlanarExposure, once a pixel),
+// x (1 - threshold / luminance) (tune4.w), then x / (x + offset) (tune5.x), and back in the scene's values (/ the exposure).
+float PlanarExposure(float4 tune4, float4 tune5)
 {
     float exposure = 1.0;
     if (asuint(tune5.y) != 0)
@@ -687,6 +687,11 @@ float3 PlanarBright(float3 x, float4 tune4, float4 tune5)
         const float L = max(g_Textures[asuint(tune5.y)].SampleLevel(g_Samplers[1023], float2(0.5, 0.5), 0).x, 1.0e-6);
         exposure = L < tune4.y ? tune4.y / L : L > tune4.z ? tune4.z / L : 1.0;
     }
+    return exposure;
+}
+
+float3 PlanarBright(float3 x, float exposure, float4 tune4, float4 tune5)
+{
     x *= exposure;
     const float luminance = max(dot(x, float3(0.2125, 0.7154, 0.0721)), 1.0e-6);
     x *= max(1.0 - tune4.w / luminance, 0.0);
@@ -768,21 +773,42 @@ float4 main(VsOut i) : SV_Target0
     if (tune.x > 1.5)
     {
         // The glow: what is brighter than white, blurred across (2, from the mirrored scene) or down (3, longer).
+        // tune5.w: the mirrored scene's pixels to one of the glow's (2: the glow at half its size, each tap across the
+        // mean of the 2 x 2 texels it covers; down reads the half-size image at its own size). The sigma is in the
+        // mirrored scene's pixels.
         const bool across = tune.x < 2.5;
+        const float step = max(tune5.w, 1.0);
         const float3 axis = PlanarAxis(i.uv, params, size, max(tune3.x, 1.0));
         const float2 dir = across ? float2(-axis.y, axis.x) : axis.xy;
-        const float glowSigma = max(tune4.x, 0.05) * (across ? 1.0 : axis.z);
+        const float glowSigma = max(tune4.x, 0.05) * (across ? 1.0 : axis.z) / step;
         const int glowRadius = min(int(ceil(glowSigma * 2.5)), 40);
         const int2 p = int2(i.pos.xy);
         const int2 top = int2(size) - 1;
+        const float exposure = across ? PlanarExposure(tune4, tune5) : 1.0;
+        const float tapStep = across ? step : 1.0;
         float3 sum = 0.0;
         float total = 0.0;
         for (int k = -glowRadius; k <= glowRadius; k++)
         {
-            const int2 q = clamp(int2(floor(i.pos.xy + dir * float(k))), int2(0, 0), top);
-            const float3 c = source.Load(int3(q, 0)).rgb;
+            const float2 at = i.pos.xy * tapStep + dir * (float(k) * tapStep);
             const float g = exp(-0.5 * float(k * k) / (glowSigma * glowSigma));
-            sum += (across ? PlanarBright(PlanarDecode(c, floatScene), tune4, tune5) : c) * g;
+            if (across && step > 1.5)
+            {
+                const int2 q = int2(floor(at - 0.5));
+                float3 c4 = 0.0;
+                [unroll] for (uint n = 0; n < 4; n++)
+                {
+                    const int2 t = clamp(q + int2(n & 1, n >> 1), int2(0, 0), top);
+                    c4 += PlanarBright(PlanarDecode(source.Load(int3(t, 0)).rgb, floatScene), exposure, tune4, tune5);
+                }
+                sum += c4 * (0.25 * g);
+            }
+            else
+            {
+                const int2 q = clamp(int2(floor(at)), int2(0, 0), top);
+                const float3 c = source.Load(int3(q, 0)).rgb;
+                sum += (across ? PlanarBright(PlanarDecode(c, floatScene), exposure, tune4, tune5) : c) * g;
+            }
             total += g;
         }
         if (across)
