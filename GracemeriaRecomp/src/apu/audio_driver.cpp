@@ -53,12 +53,25 @@ constexpr float kStereoGain = 1.2232f;   // +1.75 dB
 constexpr float kStereoPeak = 0.92f;
 float s_gain = 1.0f;
 
-// One sample's 6 channels (FL, FR, FC, LFE, BL, BR) raised by s_gain, scaled down where SDL's stereo fold of them
+// The volume (settings game.audio, AC6_AUDIO): 0 to 1.5 of the game's mix, 1 by default, 0 off. "on" / "true" are 1.
+float VolumeSetting()
+{
+    const std::string v = settings::Get("AC6_AUDIO");
+    if (v.empty() || v == "on" || v == "true")
+        return 1.0f;
+    if (v == "off" || v == "false")
+        return 0.0f;
+    return std::clamp(float(std::atof(v.c_str())), 0.0f, 1.5f);
+}
+
+std::atomic<float> s_volume{ 1.0f };
+
+// One sample's 6 channels (FL, FR, FC, LFE, BL, BR) raised by `gain`, scaled down where SDL's stereo fold of them
 // would pass kStereoPeak.
-void RaiseForStereo(float* c)
+void RaiseForStereo(float* c, float gain)
 {
     for (int i = 0; i < 6; i++)
-        c[i] *= s_gain;
+        c[i] *= gain;
     const float common = c[2] * 0.208181813f + c[3] * 0.090909094f;
     const float left = c[0] * 0.294545442f + common + c[4] * 0.251818180f + c[5] * 0.154545456f;
     const float right = c[1] * 0.294545442f + common + c[4] * 0.154545456f + c[5] * 0.251818180f;
@@ -126,9 +139,9 @@ void OpenOutput(bool start = true)
         s_dump.Open(v);
         log::Info("Audio: writing the mix to {}", v);
     }
-    if (const char* v = std::getenv("AC6_AUDIO"); start && v && *v == '0')
+    if (start && VolumeSetting() <= 0.0f)
     {
-        log::Info("Audio output disabled (AC6_AUDIO=0)");
+        log::Info("Audio output disabled (the volume at 0%)");
         return;
     }
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
@@ -201,7 +214,10 @@ void AudioClock(void*)
         if (const uint64_t generation = settings::Generation(); generation != seen)
         {
             seen = generation;
-            const bool off = settings::Get("AC6_AUDIO") == "0";
+            const float volume = VolumeSetting();
+            const bool off = volume <= 0.0f;
+            if (s_volume.exchange(volume) != volume)
+                log::Info("Audio volume {:.0f}%", volume * 100.0f);
             if (off != s_muted.exchange(off))
                 log::Info("Audio {}", off ? "off (muted)" : "on");
             if (!off && !s_stream)
@@ -297,11 +313,28 @@ uint32_t XAudioSubmitRenderDriverFrame(uint32_t driver, const be<float>* samples
     s_dump.Write(interleaved, kFrameBytes);
     if (!s_stream)
         return 0;
+    const float volume = s_volume.load(std::memory_order_relaxed);
     if (s_muted.load(std::memory_order_relaxed))
         std::memset(interleaved, 0, sizeof(interleaved));
     else if (s_gain != 1.0f)
         for (uint32_t i = 0; i < kFrameSamples; i++)
-            RaiseForStereo(&interleaved[i * 6]);
+            RaiseForStereo(&interleaved[i * 6], s_gain * volume);
+    else if (volume != 1.0f)
+        for (uint32_t i = 0; i < kFrameSamples; i++)
+        {
+            // A surround device: each channel x the volume, the sample's channels scaled down together where one
+            // would pass full scale.
+            float* c = &interleaved[i * 6];
+            float peak = 0.0f;
+            for (int k = 0; k < 6; k++)
+            {
+                c[k] *= volume;
+                peak = std::max(peak, std::fabs(c[k]));
+            }
+            if (peak > 1.0f)
+                for (int k = 0; k < 6; k++)
+                    c[k] /= peak;
+        }
     // Latency bound for the timer fallback (device-driven pacing never queues this much): past 100 ms
     // queued, frames are dropped instead of letting the delay grow.
     if (SDL_GetAudioStreamQueued(s_stream) > int(kSampleRate / 10) * 6 * 4)

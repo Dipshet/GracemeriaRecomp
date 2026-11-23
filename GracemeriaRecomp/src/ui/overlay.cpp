@@ -1881,6 +1881,9 @@ std::string ValueText(const Row& row)
     const Edit& e = s_edits[size_t(row.edit)];
     if (std::string_view(e.entry.key) == "sdr_10bit" && HdrOn())
         return "ON";
+    // (The volume, a factor, as a percentage.)
+    if (std::string_view(e.entry.key) == "audio")
+        return std::format("{:.0f}%", std::clamp(std::atof(Effective(e).c_str()), 0.0, 1.5) * 100.0);
     const std::string v = Effective(e);
     for (const auto& [value, label] : Choices(e.choices.c_str()))
         if (SameValue(value, v))

@@ -373,8 +373,10 @@ const Setting kSettings[] = {
                                                                        "Default: Player" },
     { "game", "dlc", "AC6_DLC", kBool, "true", "Loads the DLC found in the dlc folder\n"
                                                "Default: On" },
-    { "game", "audio", "AC6_AUDIO", kBool, "true", "The game's sound\n"
-                                                   "Default: On" },
+    { "game", "audio", "AC6_AUDIO", kNumber, "1", "The game's sound volume\n"
+                                                   "0% turns the sound off\n"
+                                                   "Above 100% the game's mix is raised, held under clipping\n"
+                                                   "Default: 100%" },
     { "game", "overlay_text_size", "AC6_UI_TEXT_SIZE", kNumber, "1.25",
       "The size of the settings overlay's text\n"
       "Auto is at least the system's text size\n"
@@ -595,7 +597,8 @@ const Ui kUi[] = {
       "english=English|japanese=日本語|german=Deutsch|french=Français|spanish=Español|italian=Italiano", 0, 0, 0, "english", "GENERAL" },
     { "profile_name", "Game", "Profile name", "", 0, 0, 0, "Player", "GENERAL" },
     { "dlc", "Game", "Use DLC", "", 0, 0, 0, "1", "DOWNLOADABLE CONTENT" },
-    { "audio", "Game", "Audio", "", 0, 0, 0, "1", "GENERAL" },
+    // A factor, shown as a percentage (0 the earlier Off, 1 the earlier On).
+    { "audio", "Game", "Volume", "", 0, 1.5, 0.05, "1", "GENERAL" },
     { "overlay_text_size", "Game", "Settings text size", "=Auto|1=100%|1.25=125%|1.5=150%", 0, 0, 0, "", "GENERAL" },
     { "check_updates", "Game", "Check for updates at start", "", 0, 0, 0, "1", "UPDATES" },
     { "captures", "Debug", "Captures (F11 / F12)", "", 0, 0, 0, "0", "CAPTURE AND LOGS" },
