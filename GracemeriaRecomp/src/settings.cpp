@@ -295,6 +295,7 @@ const Setting kSettings[] = {
     // The controller buttons the settings overlay shows, listed above Touchpad as Back.
     { "controller", "button_style", "AC6_BUTTON_STYLE", kText, "\"playstation\"",
       "The controller buttons the settings overlay and the game's prompts show\n"
+      "The PlayStation buttons are partial, some in-game glyphs still show Xbox buttons\n"
       "Default: Xbox" },
     // A DualShock 4 / DualSense's touchpad click as Back (input/input.cpp).
     { "controller", "touchpad_back", "AC6_TOUCHPAD_BACK", kBool, "true",

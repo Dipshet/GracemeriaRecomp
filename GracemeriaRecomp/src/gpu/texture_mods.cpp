@@ -67,15 +67,18 @@ bool ParseHash(const std::string& stem, uint64_t& hash)
     return stem.size() == 16 || !std::isxdigit(uint8_t(stem[16]));
 }
 
-// The PlayStation face buttons in the game's prompts (assets/button_glyphs/playstation, embedded): replacements of
-// the game's 40x40 glyph textures, by their hashes, while the Button style setting is PlayStation. A mod's or language
-// pack's file for the same hash wins.
+// The PlayStation buttons in the game's prompts (assets/button_glyphs/playstation, embedded): replacements of the
+// game's glyph textures (the face buttons and Back 40x40, the bumpers 64x32), by their hashes, while the Button style
+// setting is PlayStation. A mod's or language pack's file for the same hash wins.
 constexpr const char* kEmbeddedPrefix = "embedded:";
 constexpr const char* kPlayStationGlyphs[] = {
     "567C603ACEC3BEF6",   // X: square
     "5815009FFD003F54",   // B: circle
     "62B5B1271CAFB882",   // Y: triangle
     "B30926707688AFA7",   // A: cross
+    "F6FEA4FDC3163F31",   // LB: L1
+    "2E1E83B0112D8D2C",   // RB: R1
+    "91B8A24D55BA5F5F",   // Back: SELECT
 };
 
 bool PlayStationGlyphs()
