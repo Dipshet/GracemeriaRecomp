@@ -194,6 +194,10 @@ bool EnsureContext(plume::RenderDevice& renderDevice, uint32_t renderWidth, uint
     s_fsr.upscaleHeight = upscaleHeight;
     s_fsr.hdr = hdr;
     log::Info("FSR 3.1: context for {}x{} -> {}x{}{}", renderWidth, renderHeight, upscaleWidth, upscaleHeight, hdr ? " (a float scene)" : "");
+    // (Which of its shader variants it picks: 16-bit maths, the wave size.)
+    if (FfxDeviceCapabilities caps{}; backend.fpGetDeviceCapabilities && backend.fpGetDeviceCapabilities(&backend, &caps) == FFX_OK)
+        log::Info("FSR 3.1: the device's 16-bit maths {}, waves of {} to {}", caps.fp16Supported ? "used" : "not supported",
+            caps.waveLaneCountMin, caps.waveLaneCountMax);
     return true;
 }
 
@@ -201,6 +205,8 @@ struct Call
 {
     FfxFsr3UpscalerContext* context;
     FfxFsr3UpscalerDispatchDescription dispatch;
+    bool generateReactive;
+    FfxFsr3UpscalerGenerateReactiveDescription reactive;
 };
 
 // AC6_FSR_PROFILE=1: the GPU time of each of FSR's passes, from a timestamp before each of the backend's jobs
@@ -315,6 +321,22 @@ void Run(plume::RenderCommandList& target, const void* data)
         ProfileBegin(s_fsr.device.vkDevice, s_fsr.device.vkPhysicalDevice, list.vk);
         ac6FfxJobHook = ProfileHook;
     }
+    if (call.generateReactive)
+    {
+        call.reactive.commandList = call.dispatch.commandList;
+        if (const FfxErrorCode error = ffxFsr3UpscalerContextGenerateReactiveMask(call.context, &call.reactive); error != FFX_OK)
+        {
+            static uint32_t reported = 0;
+            if (reported++ < 4)
+                log::Error("FSR: reactive mask failed (error {:X})", uint32_t(error));
+        }
+        // (Its mask written before the upscale reads it.)
+        VkMemoryBarrier made{ VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+        made.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        made.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(list.vk, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &made, 0, nullptr, 0,
+            nullptr);
+    }
     if (const FfxErrorCode error = ffxFsr3UpscalerContextDispatch(call.context, &call.dispatch); error != FFX_OK)
     {
         static uint32_t reported = 0;
@@ -350,6 +372,12 @@ bool Requested()
 {
     static const bool requested = [] { const char* v = std::getenv("AC6_AA"); return v && std::string_view(v).find("fsr") != std::string_view::npos; }();
     return requested;
+}
+
+bool Late()
+{
+    static const bool late = [] { const char* v = std::getenv("AC6_FSR_LATE"); return !(v && *v == '0'); }();
+    return late;
 }
 
 float RenderRatio()
@@ -401,7 +429,25 @@ bool Dispatch(plume::RenderDevice& device, plume::RenderCommandList& cl, Deferre
     d.color = Resource(frame.color, false, L"AC6_Color");
     d.depth = Resource(frame.depth, false, L"AC6_Depth");
     d.motionVectors = Resource(frame.motion, false, L"AC6_MotionVectors");
-    if (frame.reactive.texture)
+    if (frame.opaqueOnly.texture && frame.autoReactive.texture && frame.opaqueOnly.width == frame.color.width &&
+        frame.opaqueOnly.height == frame.color.height)
+    {
+        // FSR's own reactive mask (AMD's sample's settings): where the finished frame differs from the opaque one.
+        call.generateReactive = true;
+        FfxFsr3UpscalerGenerateReactiveDescription& r = call.reactive;
+        r.colorOpaqueOnly = Resource(frame.opaqueOnly, false, L"AC6_OpaqueOnly");
+        r.colorPreUpscale = d.color;
+        r.outReactive = Resource(frame.autoReactive, true, L"AC6_AutoReactive");
+        r.renderSize = { frame.color.width, frame.color.height };
+        r.scale = 1.0f;
+        r.cutoffThreshold = 0.2f;
+        r.binaryValue = 0.9f;
+        r.flags = 1 | 4 | 8;   // tone mapped, thresholded, by the largest component
+        d.reactive = Resource(frame.autoReactive, true, L"AC6_AutoReactive");
+        if (frame.reactive.texture)
+            d.transparencyAndComposition = Resource(frame.reactive, false, L"AC6_Reactive");
+    }
+    else if (frame.reactive.texture)
         d.reactive = Resource(frame.reactive, false, L"AC6_Reactive");
     d.output = Resource(frame.output, true, L"AC6_Output");
     FfxInterface& backend = s_fsr.backendInterface;

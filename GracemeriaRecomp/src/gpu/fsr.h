@@ -18,6 +18,9 @@ bool Requested();
 // The render size over the output's with FSR upscaling: AC6_FSR_QUALITY = native (1, the default),
 // quality (1 / 1.5), balanced (1 / 1.7), performance (1 / 2), ultra (1 / 3), or AC6_FSR_SCALE=<0.33..1>.
 float RenderRatio();
+// FSR at the end of the 3D frame (the whole 3D frame at the render size), the default. AC6_FSR_LATE=0: right after the
+// world pass instead (only the world's surfaces at the render size).
+bool Late();
 
 // FSR's sub-pixel jitter for a frame (render pixels, -0.5..0.5): its Halton sequence, as many phases as the upscale needs.
 void Jitter(uint64_t frame, int32_t renderWidth, int32_t outputWidth, float& x, float& y);
@@ -36,6 +39,10 @@ struct Frame
     Image motion;     // motion vectors (render size): from this frame's unjittered position to last frame's, shader-read
     Image reactive;   // the reactive mask (render size, R8: 0 none), shader-read, or none
     Image output;     // the result (upscale size), a storage image in the general layout
+    // With both: FSR makes the reactive mask itself (into autoReactive) from the scene before its translucent layers
+    // (opaqueOnly, render size, shader-read) and `color`, and `reactive` is taken as the transparency and composition mask.
+    Image opaqueOnly;
+    Image autoReactive;   // render size, R8, a storage image in the general layout
     float jitterX = 0.0f, jitterY = 0.0f;              // the scene draws' jitter, render pixels
     float motionScaleX = 1.0f, motionScaleY = 1.0f;    // motion vectors to render pixels
     float frameTimeMs = 16.7f;

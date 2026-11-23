@@ -423,12 +423,16 @@ struct Renderer
     std::unique_ptr<RenderShader> motionCompletePs;
     std::unique_ptr<RenderPipeline> motionCompletePipeline;
     HostImage fsrMotion, fsrOutput, fsrReactive;
+    HostImage fsrAutoReactive;   // AC6_FSR_LATE: FSR's own reactive mask (the effects layer)
     std::unique_ptr<RenderFramebuffer> fsrMotionFramebuffer;   // fsrMotion and fsrReactive, the motion pass's targets
     const RenderTexture* fsrMotionFramebufferOf[2] = {};
     // FSR upscaling: the scene's render surfaces (the guest's surface objects, as the last scene
     // resolve had them, that frame) at the render scale, everything else at the frame's. The scene's colour resolve at the
     // render size (FSR's input), the mip bias of the scene's textures.
     bool upscaling = false;
+    bool lateUpscale = false;   // AC6_FSR_LATE: the 3D frame at the render size, FSR before its first 2D layer
+    bool lateNative = false;    // AC6_FSR_LATE at the native ratio: FSR on the finished 3D frame, in place
+    uint64_t lateFsrFrame = ~0ull;
     float worldResX = 1.0f, worldResY = 1.0f;
     uint32_t worldColorSurface = 0, worldDepthSurface = 0;
     uint64_t worldFrame = ~0ull;
@@ -2043,6 +2047,12 @@ std::pair<float, float> TaaJitter(uint64_t frame)
     {
         float x = 0.0f, y = 0.0f;
         fsr::Jitter(frame, int32_t(std::lround(kGuestWidth * double(s_r.worldResX))), int32_t(std::lround(kGuestWidth * double(s_r.sceneResX))), x, y);
+        return { x, y };
+    }
+    if (s_r.lateUpscale)
+    {
+        float x = 0.0f, y = 0.0f;
+        fsr::Jitter(frame, int32_t(s_r.sceneWidth), int32_t(s_r.targetWidth), x, y);
         return { x, y };
     }
     auto halton = [](uint32_t index, uint32_t base) {
@@ -6088,10 +6098,23 @@ bool InitRenderer()
                     ratio, std::min(1.0f, floor));
                 ratio = std::min(1.0f, floor);
             }
-            s_r.upscaling = s_r.fsr && ratio < 0.999f;
+            s_r.upscaling = s_r.fsr && ratio < 0.999f && !fsr::Late();
             s_r.worldResX = s_r.sceneResX * ratio;
             s_r.worldResY = s_r.sceneResY * ratio;
             s_r.worldMipBias = s_r.upscaling ? std::log2(ratio) - 1.0f : 0.0f;
+            // AC6_FSR_LATE: the whole 3D frame is already at the render size (video.cpp), the world's textures sampled
+            // finer as with the world's upscaling.
+            s_r.lateUpscale = s_r.fsr && fsr::Late() && (s_r.sceneWidth < s_r.targetWidth || s_r.sceneHeight < s_r.targetHeight);
+            s_r.lateNative = s_r.fsr && fsr::Late() && !s_r.lateUpscale;
+            if (s_r.lateNative)
+                log::Info("FSR 3.1 at the end of the 3D frame at {}x{} (anti-aliasing only)", s_r.sceneWidth, s_r.sceneHeight);
+            if (s_r.lateUpscale)
+            {
+                const float lateRatio = float(s_r.sceneWidth) / float(s_r.targetWidth);
+                s_r.worldMipBias = std::log2(lateRatio) - 1.0f;
+                log::Info("FSR 3.1 upscaling at the end of the 3D frame: {}x{} for {}x{} (mip bias {:.2f})", s_r.sceneWidth,
+                    s_r.sceneHeight, s_r.targetWidth, s_r.targetHeight, s_r.worldMipBias);
+            }
             if (s_r.upscaling)
                 log::Info("FSR 3.1 upscaling: the scene at {}x{} for {}x{} (ratio {:.3f}, mip bias {:.2f})",
                     std::lround(kGuestWidth * double(s_r.worldResX)), std::lround(kGuestHeight * double(s_r.worldResY)),
@@ -6324,6 +6347,9 @@ void ClearImpl(uint32_t device, uint32_t flags, const float color[4], float z, u
         NoteDepthWrite(t.depth);
     }
 }
+
+// (AC6_FSR_LATE: run by BeginUiImage, below.)
+bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input, HostImage* lateOut, bool late);
 
 namespace {
 
@@ -7943,15 +7969,21 @@ bool BeginUiImage(RenderCommandList& cl, HostImage& frame)
     HostImage& source = Readable(cl, frame);
     Transition(cl, source, RenderTextureLayout::SHADER_READ);
     Transition(cl, s_r.uiImage, RenderTextureLayout::COLOR_WRITE);
-    cl.setFramebuffer(GetFramebuffer(&s_r.uiImage, nullptr));
-    const float kx = float(s_r.targetWidth) / float(s_r.sceneWidth), ky = float(s_r.targetHeight) / float(s_r.sceneHeight);
-    SetViewport(cl, RenderViewport(0.0f, 0.0f, float(source.width) * kx, float(source.height) * ky));
-    SetScissor(cl, RenderRect(0, 0, int32_t(s_r.targetWidth), int32_t(s_r.targetHeight)));
-    SetPipeline(cl, copy);
-    BindCommon(cl);
-    const uint32_t push[2] = { source.descriptor, 0 };   // linear, clamped
-    cl.setGraphicsPushConstants(0, push, 0, sizeof(push));
-    cl.drawInstanced(3, 1, 0, 0);
+    // AC6_FSR_LATE: FSR upscales the finished 3D frame into the UI's image, in a frame whose world pass it saw (else the
+    // stretch below).
+    const bool upscaled = s_r.lateUpscale && s_r.taaSurfaceFrame == s_r.frame && RunFsr(cl, frame, &source, &s_r.uiImage, true);
+    if (!upscaled)
+    {
+        cl.setFramebuffer(GetFramebuffer(&s_r.uiImage, nullptr));
+        const float kx = float(s_r.targetWidth) / float(s_r.sceneWidth), ky = float(s_r.targetHeight) / float(s_r.sceneHeight);
+        SetViewport(cl, RenderViewport(0.0f, 0.0f, float(source.width) * kx, float(source.height) * ky));
+        SetScissor(cl, RenderRect(0, 0, int32_t(s_r.targetWidth), int32_t(s_r.targetHeight)));
+        SetPipeline(cl, copy);
+        BindCommon(cl);
+        const uint32_t push[2] = { source.descriptor, 0 };   // linear, clamped
+        cl.setGraphicsPushConstants(0, push, 0, sizeof(push));
+        cl.drawInstanced(3, 1, 0, 0);
+    }
     cl.setFramebuffer(nullptr);
     // The HDR output's UI split: the image as it is now is the frame before its UI.
     if (UiSplit())
@@ -8218,6 +8250,16 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
 
     // The optional lens effects on the finished 3D picture: before the frame's first 2D layer draw
     // (the HUD, a menu) into it, in a frame whose scene composite drew.
+    // AC6_FSR_LATE at the native ratio: FSR on the finished 3D frame (its effects included), in place, before
+    // its first 2D layer.
+    if (t_uiDraw && s_r.lateNative && s_r.lateFsrFrame != s_r.frame && s_r.taaSurfaceFrame == s_r.frame &&
+        s_r.sceneCompositeFrame == s_r.frame)
+    {
+        s_r.lateFsrFrame = s_r.frame;
+        if (HostImage* rt = GetSurface(U32(device + kDevRenderTargets), false);
+            rt && rt->samples == 1 && rt->width == s_r.sceneWidth && rt->height == s_r.sceneHeight)
+            RunFsr(cl, *rt, nullptr, nullptr, true);
+    }
     if (t_uiDraw && s_r.lensFxFrame != s_r.frame && s_r.sceneCompositeFrame == s_r.frame)
     {
         s_r.lensFxFrame = s_r.frame;
@@ -11764,8 +11806,9 @@ void StretchInto(RenderCommandList& cl, HostImage& src, HostImage& dst, uint32_t
 // the camera's elsewhere: the motion completion pass) to FSR, its result into the image. `input`: with FSR upscaling
 // the scene's resolve at the render size, from which FSR makes `image` at the frame's size, null: `image` is both (native
 // anti-aliasing). False when FSR couldn't run.
-bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input = nullptr)
+bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input = nullptr, HostImage* lateOut = nullptr, bool late = false)
 {
+    late = late || lateOut;
     HostImage& source = input ? *input : image;
     // (HDR from the scene's float image too: FSR told the colour is high dynamic range, the copy back in float.)
     const bool floatImage = source.format == RenderFormat::R16G16B16A16_FLOAT && s_r.copyHdrPipeline;
@@ -11781,8 +11824,9 @@ bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input = nullptr)
         return false;
     // The render size (the source's) and the output's (the frame's scale).
     const uint32_t w = source.width, h = source.height;
-    const uint32_t outW = input ? uint32_t(std::lround(double(GuestWidth(source)) * s_r.sceneResX)) : w;
-    const uint32_t outH = input ? uint32_t(std::lround(double(GuestHeight(source)) * s_r.sceneResY)) : h;
+    // (AC6_FSR_LATE: into `lateOut`, the output-size frame its 2D layers are drawn over.)
+    const uint32_t outW = lateOut ? lateOut->width : input ? uint32_t(std::lround(double(GuestWidth(source)) * s_r.sceneResX)) : w;
+    const uint32_t outH = lateOut ? lateOut->height : input ? uint32_t(std::lround(double(GuestHeight(source)) * s_r.sceneResY)) : h;
     const bool resized = !s_r.fsrOutput.texture || s_r.fsrOutput.width != outW || s_r.fsrOutput.height != outH ||
         !s_r.fsrMotion.texture || s_r.fsrMotion.width != w || s_r.fsrMotion.height != h;
     EnsureImage(s_r.fsrMotion, w, h, RenderFormat::R16G16_FLOAT, false, 1, false, true);
@@ -11851,6 +11895,29 @@ bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input = nullptr)
     if (motionDescriptor && s_r.motion.format == RenderFormat::R16G16B16A16_FLOAT)
         frame.reactive = { s_r.fsrReactive.texture.get(), s_r.fsrReactive.format, w, h };
     frame.output = { s_r.fsrOutput.texture.get(), s_r.fsrOutput.format, outW, outH };
+    // AC6_FSR_LATE: the effects layer reactive, by FSR's own mask from the world pass's resolve (the scene before the
+    // effects buffer, the compositor and the post chain) and the finished 3D frame.
+    if (late)
+        if (auto opaque = s_r.resolved.find(0x05BEB000); opaque != s_r.resolved.end() && opaque->second.texture &&
+            opaque->second.width == w && opaque->second.height == h && opaque->second.format == source.format)
+        {
+            EnsureImage(s_r.fsrAutoReactive, w, h, RenderFormat::R8_UNORM, false, 1, true, true);
+            Transition(cl, opaque->second, RenderTextureLayout::SHADER_READ);
+            Transition(cl, s_r.fsrAutoReactive, RenderTextureLayout::GENERAL);
+            frame.opaqueOnly = { opaque->second.texture.get(), opaque->second.format, w, h };
+            frame.autoReactive = { s_r.fsrAutoReactive.texture.get(), s_r.fsrAutoReactive.format, w, h };
+        }
+    if (late)
+    {
+        static bool logged = false;
+        if (!std::exchange(logged, true))
+        {
+            auto opaque = s_r.resolved.find(0x05BEB000);
+            log::Info("FSR at the end of the 3D frame: {}x{} format {} -> {}x{}, the scene before its effects {}", w, h, int(source.format),
+                outW, outH, opaque == s_r.resolved.end() ? std::string("missing") : std::format("{}x{} format {}{}", opaque->second.width,
+                opaque->second.height, int(opaque->second.format), frame.autoReactive.texture ? " (FSR's own reactive mask)" : ""));
+        }
+    }
     frame.jitterX = jx;
     frame.jitterY = jy;
     frame.motionScaleX = float(w);
@@ -11870,7 +11937,7 @@ bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input = nullptr)
     s_bound = BoundState{ g_video.recordingEpoch };   // FSR bound its own pipelines and descriptor sets
 
     // Its result into the scene image (upscaling: made at the output's size, at the frame's scale).
-    if (input)
+    if (input && !lateOut)
     {
         EnsureImage(image, outW, outH, source.format, false, 1, false, true);
         image.bgraOrder = source.bgraOrder;   // (a float scene's image reads as the 8-bit one's channels)
@@ -11879,9 +11946,10 @@ bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input = nullptr)
         image.fresh = false;
     }
     MarkPass([] { return std::string("FSR copy back"); });
+    HostImage& dest = lateOut ? *lateOut : image;
     Transition(cl, s_r.fsrOutput, RenderTextureLayout::SHADER_READ);
-    Transition(cl, image, RenderTextureLayout::COLOR_WRITE);
-    cl.setFramebuffer(GetFramebuffer(&image, nullptr));
+    Transition(cl, dest, RenderTextureLayout::COLOR_WRITE);
+    cl.setFramebuffer(GetFramebuffer(&dest, nullptr));
     SetViewport(cl, RenderViewport(0.0f, 0.0f, float(outW), float(outH)));
     SetScissor(cl, RenderRect(0, 0, int32_t(outW), int32_t(outH)));
     // (Same size: its samples are the texels.) Sharpened as TAA's output is, x 0.6 to match RCAS at the same setting
@@ -11897,12 +11965,14 @@ bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input = nullptr)
     if (reactiveView && frame.reactive.texture && !floatImage)
     {
         cl.setFramebuffer(nullptr);
-        Transition(cl, s_r.fsrReactive, RenderTextureLayout::SHADER_READ);
-        Transition(cl, image, RenderTextureLayout::COLOR_WRITE);
-        cl.setFramebuffer(GetFramebuffer(&image, nullptr));
+        // (AC6_FSR_LATE: FSR's own mask, the one it used.)
+        HostImage& mask = frame.autoReactive.texture ? s_r.fsrAutoReactive : s_r.fsrReactive;
+        Transition(cl, mask, RenderTextureLayout::SHADER_READ);
+        Transition(cl, dest, RenderTextureLayout::COLOR_WRITE);
+        cl.setFramebuffer(GetFramebuffer(&dest, nullptr));
         SetPipeline(cl, s_r.copyPipeline.get());
         BindCommon(cl);
-        const uint32_t maskPush[4] = { s_r.fsrReactive.descriptor, 0, 0, 0 };
+        const uint32_t maskPush[4] = { mask.descriptor, 0, 0, 0 };
         cl.setGraphicsPushConstants(0, maskPush, 0, sizeof(maskPush));
         cl.drawInstanced(3, 1, 0, 0);
     }
@@ -12267,7 +12337,8 @@ void ResolveImpl(uint32_t device, uint32_t flags, const ResolveRect* srcRect, ui
                         // (Object motion blur: its motion is made before the anti-aliasing, which stores this frame's
                         // camera as the last one, and the blur is applied after it.)
                         HostImage* const blurMotion = MotionBlurStrength() > 0.0f ? MotionForBlur(cl) : nullptr;
-                        const bool fsrRan = s_r.fsr && RunFsr(cl, target, worldResolve ? &s_r.fsrColor : nullptr);
+                        // (AC6_FSR_LATE: FSR runs before the frame's first 2D layer instead, BeginUiImage.)
+                        const bool fsrRan = s_r.fsr && (s_r.lateUpscale || s_r.lateNative || RunFsr(cl, target, worldResolve ? &s_r.fsrColor : nullptr));
                         if (s_r.upscaling && fsrRan)
                         {
                             s_r.worldColorSurface = sourceSurface;

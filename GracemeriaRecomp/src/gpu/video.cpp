@@ -6,6 +6,7 @@
 #include "gpu/capture.h"
 #include "gpu/deferred_commands.h"
 #include "gpu/frame_rate.h"
+#include "gpu/fsr.h"
 #include "gpu/renderer.h"
 #include "input/input.h"
 #include "input/kbm.h"
@@ -156,7 +157,23 @@ const SDL_DisplayMode* Video::ChooseDisplayMode()
     // Not with FSR (AC6_AA=fsr), whose quality setting picks the scene's size (the overlay greys the row).
     const char* aa = std::getenv("AC6_AA");
     const bool fsr = aa && std::string_view(aa).find("fsr") != std::string_view::npos;
-    if (const char* v = std::getenv("AC6_RENDER_SCALE"); v && *v && fsr)
+    if (fsr && fsr::Late())
+    {
+        // FSR upscaling at the end of the 3D frame: the quality's ratio as the render scale (at least half the console's
+        // resolution on either axis).
+        double scale = fsr::RenderRatio();
+        const double floorScale = 0.5 / std::min(double(frameScaleX), double(frameScaleY));
+        scale = std::max(scale, std::min(1.0, floorScale));
+        if (scale < 0.999)
+        {
+            renderWidth = std::max(1u, uint32_t(std::lround(frameWidth * scale)));
+            renderHeight = std::max(1u, uint32_t(std::lround(frameHeight * scale)));
+            renderScaleX = float(renderWidth) / float(kGuestWidth);
+            renderScaleY = float(renderHeight) / float(kGuestHeight);
+            renderScale = std::min(renderScaleX, renderScaleY);
+        }
+    }
+    else if (const char* v = std::getenv("AC6_RENDER_SCALE"); v && *v && fsr)
         log::Info("AC6_RENDER_SCALE={}: not with FSR (AC6_FSR_QUALITY picks the scene's size)", v);
     else if (const char* v = std::getenv("AC6_RENDER_SCALE"); v && *v && !std::getenv("AC6_RENDER_RESOLUTION"))
     {
