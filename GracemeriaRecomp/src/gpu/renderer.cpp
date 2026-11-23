@@ -5728,6 +5728,11 @@ void WriteScreenshot(const std::string& name)
 
 } // namespace
 
+bool RendererSeaReflects()
+{
+    return WaterSsr();
+}
+
 // (Defined with the other passes over the scene, below, used by the draws.)
 void RunSeaReflection(RenderCommandList& cl, HostImage& image, const HostImage* surface);
 void RunPlanarReflection(RenderCommandList& cl, HostImage& image, const HostImage* surface);

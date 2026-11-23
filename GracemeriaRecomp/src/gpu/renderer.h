@@ -44,6 +44,9 @@ void RequestRingDump();
 // False when it doesn't (the shader module is then left for the first draw).
 struct HostShader;
 bool RendererPrepareShaderLibrary(HostShader& shader);
+// Whether the sea reflects the scene (the planar reflection or AC6_SSR, both read at start): the map's pixel shaders
+// carry the reflection's code only then.
+bool RendererSeaReflects();
 // The pipeline list (pipelines known from earlier runs, built ahead of their draws). RendererPipelineListWants: whether
 // any of them is made of the shader with this hash (its module is then made as soon as it is translated).
 // RendererShaderReady: the shader has its module (a listed pipeline is built once both its shaders have one).

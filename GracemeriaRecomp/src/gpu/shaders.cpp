@@ -293,7 +293,7 @@ uint64_t CacheKey()
     // Every switch a translation depends on (the EDRAM swizzle emulation decides the un-swizzle shaders' identity
     // fetches).
     return kShaderCacheKey ^ kCacheFormat ^ (HlslBackend() ? 0x100 : 0) ^ (UniformConstants() ? 0 : 0x200) ^
-        (EdramSwizzle() && !HlslBackend() ? 0x400 : 0);
+        (EdramSwizzle() && !HlslBackend() ? 0x400 : 0) ^ (RendererSeaReflects() ? 0x800 : 0);
 }
 
 // Masked execution of pixel shader jumps and predicated fetches. AC6_MASKED_EXEC=0 translates them as branches
@@ -835,7 +835,8 @@ bool Translate(HostShader& s, bool createModule = true)
         recompiler.squareOffsetSlots = SquareOffsetSlots(s);
         // The map's pixel shaders (the ground and the sea): texture 0 is an atlas page.
         recompiler.tileAtlasSlots = s.pixel && (s.idHash == 0xCDB30131360ACAAAull || s.idHash == 0x3ADEF3EC4BA4640Dull) ? 1u : 0u;
-        recompiler.seaReflection = s.seaReflection;
+        // (The sea's reflection only where the sea reflects the scene: its code is left out otherwise.)
+        recompiler.seaReflection = s.seaReflection && RendererSeaReflects();
         recompiler.rangeSaturate = (s.optionUse & kOptHdrScene) && (s.options & kOptHdrScene);   // HDR from the scene
         recompiler.sceneFloat = (s.optionUse & kOptSceneFloat) && (s.options & kOptSceneFloat);   // lighting in float
         recompiler.liftWhiteMin = !KeepWhiteMin();   // AC6_SCENE_FLOAT_MIN
