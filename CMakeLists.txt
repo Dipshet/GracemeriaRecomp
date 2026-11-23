@@ -367,7 +367,7 @@ add_library(ac6_runtime OBJECT
     GracemeriaRecomp/src/game/packages.cpp
     GracemeriaRecomp/src/game/inflate.cpp
     GracemeriaRecomp/src/game/cutscene_unlock.cpp
-    GracemeriaRecomp/src/game/damage_report_guard.cpp
+    GracemeriaRecomp/src/game/crash_guards.cpp
     GracemeriaRecomp/src/game/tu_mission_check.cpp
     GracemeriaRecomp/src/game/cockpit.cpp
     GracemeriaRecomp/src/game/hud_colour.cpp
