@@ -286,7 +286,7 @@ void ApplyPatches(uint64_t hash, std::string& hlsl)
 // carry kShaderCacheKey: a changed translator ignores them. Off with AC6_SHADER_CACHE=0, and while
 // shaders are dumped or patched.
 constexpr uint32_t kCacheMagic = 0x53364341;   // "AC6S". Bump kCacheFormat when the entry layout changes
-constexpr uint32_t kCacheFormat = 21;   // bumped whenever the entry layout or a translation's output changes
+constexpr uint32_t kCacheFormat = 22;   // bumped whenever the entry layout or a translation's output changes
 
 // The subgroup vote in pixel shaders: a masked-execution block (a jump some pixels take) that every pixel of the wave
 // skips is not run. AC6_WAVE_SKIP=0 off.

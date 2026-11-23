@@ -2333,6 +2333,41 @@ void SpirvRecompiler::recompile(const uint8_t* shaderData, uint32_t variant)
                     { b.ConstU32(spv::ScopeSubgroup), b.Load(b.Bool(), xeInactive) });
                 waveRuns = b.BeginIf(Not(allSkip));
             }
+            // (A predicated block no lane of the wave runs: not run. Its instructions check the predicate as they go,
+            // so only a block that sets none.)
+            SpirvBuilder::IfScope predRuns{};
+            bool predSkip = waveVote && isPixelShader && count > 0 &&
+                (cf.opcode == ControlFlowOpcode::CondExecPred || cf.opcode == ControlFlowOpcode::CondExecPredEnd);
+            if (predSkip)
+            {
+                const be<uint32_t>* words = code + address * 3;
+                uint32_t s = sequence;
+                const uint32_t condition = cf.condExecPred.condition;
+                for (uint32_t n = 0; n < count && predSkip; n++, words += 3, s >>= 2)
+                {
+                    const uint32_t w0 = words[0], w1 = words[1], w2 = words[2];
+                    if (s & 1)
+                    {
+                        if ((w1 >> 31) && (w2 >> 31) != condition)   // a fetch predicated the other way
+                            predSkip = false;
+                        continue;
+                    }
+                    const uint32_t scalarOp = w0 >> 26, vectorOp = (w2 >> 24) & 31;
+                    if ((((w1 >> 28) & 1) && ((w1 >> 27) & 1) != condition) ||
+                        (scalarOp >= uint32_t(AluScalarOpcode::SetpEq) && scalarOp <= uint32_t(AluScalarOpcode::SetpRstr)) ||
+                        (vectorOp >= uint32_t(AluVectorOpcode::SetpEqPush) && vectorOp <= uint32_t(AluVectorOpcode::SetpGePush)))
+                        predSkip = false;
+                }
+            }
+            if (predSkip)
+            {
+                b.Capability(spv::CapabilityGroupNonUniform);
+                b.Capability(spv::CapabilityGroupNonUniformVote);
+                uint32_t p = b.Load(b.Bool(), p0);
+                if (!cf.condExecPred.condition)
+                    p = Not(p);
+                predRuns = b.BeginIf(b.Emit(spv::OpGroupNonUniformAny, b.Bool(), { b.ConstU32(spv::ScopeSubgroup), p }));
+            }
             if (maskedExecution && count > 0)
             {
                 for (uint32_t k = 0; k < 32; k++)
@@ -2410,6 +2445,8 @@ void SpirvRecompiler::recompile(const uint8_t* shaderData, uint32_t variant)
                 if (outputs & PIXEL_SHADER_OUTPUT_DEPTH)
                     restore(oDepth, saveODepth, b.F32(), 1);
             }
+            if (predSkip)
+                b.EndIf(predRuns);
             if (waveSkip)
                 b.EndIf(waveRuns);
 
