@@ -77,7 +77,7 @@ European and Japanese releases are **not supported**.
 | **Image quality** | MSAA override<br>SMAA, TAA, and AMD FSR 3.1<br>Anisotropic filtering<br>10-bit output and debanding |
 | **Optional effects** | Planar reflections on water<br>Enhanced bloom<br>Ambient occlusion (XeGTAO)<br>Object motion blur<br>Film grain, vignette and chromatic aberration<br>Sharper character shadows in cutscenes |
 | **Controls** | DualSense adaptive triggers, similar to Ace Combat 8<br>Flight sticks and HOTAS: any device's axes and buttons bound to the game's controls, each axis with its own curve and dead zone<br>Keyboard and mouse controls in the style of Ace Combat 7, with mouse steering |
-| **Languages** | English and Japanese sub and dub<br>German, French, Spanish, and Italian sub |
+| **Languages** | English and Japanese sub and dub<br>German, French, Spanish, and Italian sub (experimental) |
 | **Mod support** | Mods go in a `mods` folder next to the game<br>**Textures:** replace any texture with your own, at any resolution. The overlay's texture browser can display and dump any texture that is shown in the frame.<br>**Game files:** replace any of the game's data files.<br>**Lua mods:** scripts that hook any of the game's functions, read and write its memory, call it, read the controllers, keyboard and mouse, and draw over the picture ([guide](docs/modding/lua.md), [examples](examples/mods))<br>**Plugins:** native code that hooks any of the game's functions, for example the [PSM mod](https://github.com/Dipshet/GracemeriaRecomp) |
 | **Self Update** | The game checks for a newer version at start and installs it from the overlay's Game tab. |
 
@@ -133,7 +133,10 @@ slower, but the log then names the draw where the graphics card fails. Reproduce
 `ac6_runtime.log`.
 
 - **Only the North American release** is supported.
-- **European languages:** Languages are mixed and button glyphs are drawn above texts.
+- **European languages are experimental:** German, French, Spanish and Italian use older text on the North American
+  disc that the game was never released or tested with. Some text is in the wrong language, button glyphs are drawn
+  over text, the HUD has no accented letters, and the game may crash or misbehave.
+  If something goes wrong, switch the language to English and see whether it happens again before reporting it.
 - **Old AMD drivers (before 2022):** in the cockpit view, the canopy can show through the instrument panel. Turn
   Dynamic rendering off (Debug tab, Graphics driver).
 - **DualSense adaptive triggers on Linux** may need access to the controller's hidraw device (Steam's or
@@ -154,7 +157,7 @@ mods are kept.
 
 ### Can I use the European or Japanese release?
 
-No. Only the North American (NTSC-U) release is supported. Japanese, German, French, Spanish, and Italian language can be enabled in the settings.
+No. Only the North American (NTSC-U) release is supported. Japanese, German, French, Spanish, and Italian language can be enabled in the settings (the European ones are experimental, see Known Issues).
 
 ### How do I transfer my old save files from AC6Recomp?
 
