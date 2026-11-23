@@ -288,12 +288,24 @@ void ApplyPatches(uint64_t hash, std::string& hlsl)
 constexpr uint32_t kCacheMagic = 0x53364341;   // "AC6S". Bump kCacheFormat when the entry layout changes
 constexpr uint32_t kCacheFormat = 21;   // bumped whenever the entry layout or a translation's output changes
 
+// The subgroup vote in pixel shaders: a masked-execution block (a jump some pixels take) that every pixel of the wave
+// skips is not run. AC6_WAVE_SKIP=0 off.
+bool WaveVote()
+{
+    static const bool allowed = [] {
+        const char* v = std::getenv("AC6_WAVE_SKIP");
+        return !v || *v != '0';
+    }();
+    return allowed && g_video.device && g_video.device->getCapabilities().fragmentWaveVote;
+}
+
 uint64_t CacheKey()
 {
     // Every switch a translation depends on (the EDRAM swizzle emulation decides the un-swizzle shaders' identity
     // fetches).
     return kShaderCacheKey ^ kCacheFormat ^ (HlslBackend() ? 0x100 : 0) ^ (UniformConstants() ? 0 : 0x200) ^
-        (EdramSwizzle() && !HlslBackend() ? 0x400 : 0) ^ (RendererSeaReflects() ? 0x800 : 0);
+        (EdramSwizzle() && !HlslBackend() ? 0x400 : 0) ^ (RendererSeaReflects() ? 0x800 : 0) ^
+        (WaveVote() ? 0x1000 : 0);
 }
 
 // Masked execution of pixel shader jumps and predicated fetches. AC6_MASKED_EXEC=0 translates them as branches
@@ -827,6 +839,7 @@ bool Translate(HostShader& s, bool createModule = true)
     {
         xenos::SpirvRecompiler recompiler;
         recompiler.allowMaskedExecution = MaskedExecEnabled();
+        recompiler.waveVote = WaveVote();
         recompiler.identityFetchSlots = EdramUnswizzleSlots(s);
         const DofSlots dof = DofFixSlots(s);
         recompiler.guestTexelSnapSlots = dof.snap;

@@ -2321,6 +2321,18 @@ void SpirvRecompiler::recompile(const uint8_t* shaderData, uint32_t variant)
                 break;
             }
 
+            // (A block every lane of the wave skips: not run, nothing to undo. The vote is on the lanes' own
+            // flags, so a wave that runs it runs it as before, derivatives included.)
+            SpirvBuilder::IfScope waveRuns{};
+            const bool waveSkip = maskedExecution && count > 0 && waveVote;
+            if (waveSkip)
+            {
+                b.Capability(spv::CapabilityGroupNonUniform);
+                b.Capability(spv::CapabilityGroupNonUniformVote);
+                const uint32_t allSkip = b.Emit(spv::OpGroupNonUniformAll, b.Bool(),
+                    { b.ConstU32(spv::ScopeSubgroup), b.Load(b.Bool(), xeInactive) });
+                waveRuns = b.BeginIf(Not(allSkip));
+            }
             if (maskedExecution && count > 0)
             {
                 for (uint32_t k = 0; k < 32; k++)
@@ -2398,6 +2410,8 @@ void SpirvRecompiler::recompile(const uint8_t* shaderData, uint32_t variant)
                 if (outputs & PIXEL_SHADER_OUTPUT_DEPTH)
                     restore(oDepth, saveODepth, b.F32(), 1);
             }
+            if (waveSkip)
+                b.EndIf(waveRuns);
 
             if (shouldReturn)
             {

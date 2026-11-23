@@ -54,6 +54,8 @@ struct SpirvRecompiler
     // The sea's reflection of the scene: the map's pixel shaders blend it into what they fetch from
     // their sky cube (SeaReflection), where the draw gives one.
     bool seaReflection = false;
+    // The subgroup vote in pixel shaders: a masked-execution block every lane of the wave skips is not run.
+    bool waveVote = false;
     // The game's light inputs: register -> kind (shaders.cpp NoteLightConstants). A static read of
     // one is multiplied by the shared block's relighting factor of its kind (x, y, z. Kind 8, the light cap: x only).
     std::unordered_map<uint32_t, uint8_t> lightRegisters;

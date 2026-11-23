@@ -1826,6 +1826,9 @@ namespace plume {
         // UMA.
         bool uma = false;
 
+        // Subgroup votes (all/any) in fragment shaders.
+        bool fragmentWaveVote = false;
+
         // GPU Upload heap.
         bool gpuUploadHeap = false;
 

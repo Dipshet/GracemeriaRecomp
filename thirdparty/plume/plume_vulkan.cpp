@@ -5011,6 +5011,16 @@ namespace plume {
         capabilities.dynamicDepthBias = true;
         capabilities.queryPools = true;
         capabilities.uma = (description.type == RenderDeviceType::INTEGRATED) && hasHostVisibleDeviceLocalMemory;
+        {
+            VkPhysicalDeviceSubgroupProperties subgroupProperties = {};
+            subgroupProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+            VkPhysicalDeviceProperties2 deviceProperties2 = {};
+            deviceProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            deviceProperties2.pNext = &subgroupProperties;
+            vkGetPhysicalDeviceProperties2(physicalDevice, &deviceProperties2);
+            capabilities.fragmentWaveVote = (subgroupProperties.supportedStages & VK_SHADER_STAGE_FRAGMENT_BIT) &&
+                (subgroupProperties.supportedOperations & VK_SUBGROUP_FEATURE_VOTE_BIT);
+        }
         capabilities.gpuUploadHeap = capabilities.uma;
 
 #   if defined(__APPLE__)
