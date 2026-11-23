@@ -433,6 +433,7 @@ struct Renderer
     bool lateUpscale = false;   // AC6_FSR_LATE: the 3D frame at the render size, FSR before its first 2D layer
     bool lateNative = false;    // AC6_FSR_LATE at the native ratio: FSR on the finished 3D frame, in place
     uint64_t lateFsrFrame = ~0ull;
+    uint64_t fsrRanFrame = ~0ull;   // the last frame FSR ran (its jitter only while it does)
     float worldResX = 1.0f, worldResY = 1.0f;
     uint32_t worldColorSurface = 0, worldDepthSurface = 0;
     uint64_t worldFrame = ~0ull;
@@ -455,6 +456,10 @@ struct Renderer
     // the world's is the one most draws use.
     struct TaaVpCandidate { double m[16]; uint32_t draws; };
     std::vector<TaaVpCandidate> taaVpCandidates;
+    // A scene with no world camera in c116-c119 (the hangar's shaders take each object's object x camera): the draws'
+    // position matrices, of which the one most use (the static building's) stands in for the camera.
+    std::vector<TaaVpCandidate> taaObjectCandidates;
+    uint64_t taaObjectFrame = ~0ull;
     // TAA's motion vectors: the scene surface's second colour target (each pixel's movement since
     // last frame), its single-sampled copy, the framebuffers with it, and each object's c116-c119 transform by draw
     // (this frame's and last frame's, keyed by what the draw draws, instances in drawing order).
@@ -1800,6 +1805,13 @@ bool SmaaOn()
 bool FsrRunning()
 {
     return s_r.fsr && !fsr::Failed();
+}
+
+// The scene draws jittered for FSR: only while it runs (it ran last frame or this one). A screen where it can't (the
+// hangar has no scene depth for it) would otherwise show the raw jitter, the picture shaking by a pixel.
+bool FsrJitters()
+{
+    return FsrRunning() && s_r.fsrRanFrame != ~0ull && s_r.frame - s_r.fsrRanFrame <= 1;
 }
 
 // FSR's reactive mask: the scene's translucent draws (smoke, fire, trails, glows, the game's sprites) write how much they
@@ -4476,7 +4488,7 @@ void SeaReflectionAtDraw(uint32_t device, const HostShader& vs, const HostShader
     inverse[8] = (now[0] * now[4] - now[1] * now[3]) / det;
     // This draw's jitter (as Draw applies it to the scene's viewport), in pixels.
     float jx = 0.0f, jy = 0.0f;
-    if ((TaaOn() || FsrRunning()) && targets.color == s_r.taaSurface && TaaSurfaceLive() && !t_uiDraw)
+    if ((TaaOn() || FsrJitters()) && targets.color == s_r.taaSurface && TaaSurfaceLive() && !t_uiDraw)
     {
         const auto jitter = TaaJitter(SeedFrame());
         jx = jitter.first;
@@ -6965,7 +6977,7 @@ uint32_t CloudMarchStep()
 std::pair<float, float> SceneJitter()
 {
     static const bool on = [] { const char* v = std::getenv("AC6_VOL_JITTER"); return !(v && *v == '0'); }();
-    if (!on || !(TaaOn() || FsrRunning()) || !TaaSurfaceLive())
+    if (!on || !(TaaOn() || FsrJitters()) || !TaaSurfaceLive())
         return { 0.0f, 0.0f };
     return TaaJitter(SeedFrame());
 }
@@ -9276,7 +9288,8 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
     if ((TaaOn() || FsrRunning()) && targets.color && targets.color == s_r.taaSurface && TaaSurfaceLive() && !t_uiDraw &&
         viewport.width > 0.0f && viewport.height > 0.0f)
     {
-        const auto [jx, jy] = TaaJitter(SeedFrame());
+        // (FSR's jitter only while it runs; the camera below is gathered either way, FSR needs it to start.)
+        const auto [jx, jy] = TaaOn() || FsrJitters() ? TaaJitter(SeedFrame()) : std::pair<float, float>{ 0.0f, 0.0f };
         const float offset[2] = { sc.halfPixelOffsetX + 2.0f * jx / viewport.width, sc.halfPixelOffsetY - 2.0f * jy / viewport.height };
         std::memcpy(shared.memory + offsetof(SharedConstants, halfPixelOffsetX), offset, sizeof(offset));
         std::memcpy(&sc.halfPixelOffsetX, offset, sizeof(offset));
@@ -9289,6 +9302,29 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
         for (uint32_t i = 0; i < 16; i++)
             m[i] = double(std::bit_cast<float>(U32(device + kDevVsConstants + 116 * 16 + i * 4)));
         const bool perspective = std::fabs(m[2]) + std::fabs(m[6]) + std::fabs(m[10]) > 1e-6 && std::fabs(m[3]) + std::fabs(m[7]) + std::fabs(m[11]) > 1e-6;
+        // (The draw's own position matrix too, for a scene without the world camera: the hangar.)
+        if (!perspective && vs->positionMatrix != UINT32_MAX && vs->constantFirst <= vs->positionMatrix &&
+            vs->positionMatrix + 4 <= vs->constantEnd)
+        {
+            double o[16];
+            for (uint32_t i = 0; i < 16; i++)
+                o[i] = double(std::bit_cast<float>(U32(device + kDevVsConstants + vs->positionMatrix * 16 + i * 4)));
+            if (std::fabs(o[3]) + std::fabs(o[7]) + std::fabs(o[11]) > 1e-6)
+            {
+                if (s_r.taaObjectFrame != s_r.frame)
+                    s_r.taaObjectCandidates.clear();
+                s_r.taaObjectFrame = s_r.frame;
+                auto& objects = s_r.taaObjectCandidates;
+                auto same = [&](const Renderer::TaaVpCandidate& c) { return std::memcmp(c.m, o, sizeof(o)) == 0; };
+                if (auto it = std::find_if(objects.begin(), objects.end(), same); it != objects.end())
+                    it->draws++;
+                else if (objects.size() < 256)
+                {
+                    objects.push_back({ {}, 1 });
+                    std::memcpy(objects.back().m, o, sizeof(o));
+                }
+            }
+        }
         // The draw's motion: the matrix its vertex shader transforms the position with (by name:
         // HostShader::positionMatrix) against the same object's last frame, when it holds a perspective transform.
         if (specConstants & SPEC_CONSTANT_MOTION)
@@ -10297,9 +10333,19 @@ void RunSmaa(RenderCommandList& cl, HostImage& image)
 // frame's clip position to last frame's). False when the frame had none.
 bool SceneReprojection(double vp[16], double r[16])
 {
-    if (s_r.taaVpFrame != s_r.frame || s_r.taaVpCandidates.empty())
+    const bool worldCamera = s_r.taaVpFrame == s_r.frame && !s_r.taaVpCandidates.empty();
+    // (No world camera this frame: the position matrix most of the scene's draws use, the hangar's building.)
+    const bool objectCamera = !worldCamera && s_r.taaObjectFrame == s_r.frame && !s_r.taaObjectCandidates.empty();
+    if (!worldCamera && !objectCamera)
         return false;
-    const auto world = std::max_element(s_r.taaVpCandidates.begin(), s_r.taaVpCandidates.end(),
+    const auto& candidates = worldCamera ? s_r.taaVpCandidates : s_r.taaObjectCandidates;
+    if (objectCamera)
+    {
+        static bool logged = false;
+        if (!std::exchange(logged, true))
+            log::Info("TAA / FSR: no world camera on frame {} (the hangar): the position matrix of the most draws is the camera", s_r.frame);
+    }
+    const auto world = std::max_element(candidates.begin(), candidates.end(),
         [](const Renderer::TaaVpCandidate& a, const Renderer::TaaVpCandidate& b) { return a.draws < b.draws; });
     std::memcpy(vp, world->m, 16 * sizeof(double));
     double inverse[16];
@@ -11834,16 +11880,27 @@ bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input = nullptr,
     HostImage& source = input ? *input : image;
     // (HDR from the scene's float image too: FSR told the colour is high dynamic range, the copy back in float.)
     const bool floatImage = source.format == RenderFormat::R16G16B16A16_FLOAT && s_r.copyHdrPipeline;
-    if (!s_r.fsr || !s_r.motionCompletePipeline || !source.texture || (source.format != RenderFormat::B8G8R8A8_UNORM && !floatImage) ||
-        !s_r.device)
+    // (Why it didn't run, once a reason.)
+    static uint32_t reported = 0;
+    auto notRun = [](uint32_t reason, const char* why) {
+        if (!(reported & reason))
+        {
+            reported |= reason;
+            log::Info("FSR not run on frame {}: {}", s_r.frame, why);
+        }
         return false;
+    };
+    if (!s_r.fsr || !s_r.motionCompletePipeline || !s_r.device)
+        return notRun(1, "no FSR pipelines");
+    if (!source.texture || (source.format != RenderFormat::B8G8R8A8_UNORM && !floatImage))
+        return notRun(2, "the scene image's format");
     auto depthIt = s_r.resolved.find(0x05F83000);
     if (depthIt == s_r.resolved.end() || !depthIt->second.texture)
-        return false;
+        return notRun(4, "no scene depth (0x05F83000) resolved");
     HostImage& depth = depthIt->second;
     double vp[16], r[16];
     if (!SceneReprojection(vp, r))
-        return false;
+        return notRun(8, "no camera this frame");
     // The render size (the source's) and the output's (the frame's scale).
     const uint32_t w = source.width, h = source.height;
     // (AC6_FSR_LATE: into `lateOut`, the output-size frame its 2D layers are drawn over.)
@@ -11862,7 +11919,8 @@ bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input = nullptr,
         s_r.fsrMotionFramebuffer = g_video.device->createFramebuffer(RenderFramebufferDesc(s_r.fsrMotionFramebufferOf, 2));
     }
     EnsureImage(s_r.fsrOutput, outW, outH, RenderFormat::R16G16B16A16_FLOAT, false, 1, true, true);
-    const auto [jx, jy] = TaaJitter(SeedFrame());
+    // (The jitter the draws had: none on the first frame it runs again.)
+    const auto [jx, jy] = FsrJitters() ? TaaJitter(SeedFrame()) : std::pair<float, float>{ 0.0f, 0.0f };
     const bool reset = resized || !s_r.taaHavePrev || s_r.frame != s_r.taaLastFrame + 1 || CameraCut(vp);
     const uint32_t motionDescriptor = DrawnMotion(cl);
 
@@ -11955,7 +12013,7 @@ bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input = nullptr,
     frame.debugView = debugView;
     DeferredCommandList* deferred = g_video.deferred && &cl == g_video.deferred.get() ? g_video.deferred.get() : nullptr;
     if (!fsr::Dispatch(*g_video.device, cl, deferred, frame))
-        return false;
+        return notRun(16, "FSR's dispatch failed");
     s_bound = BoundState{ g_video.recordingEpoch };   // FSR bound its own pipelines and descriptor sets
 
     // Its result into the scene image (upscaling: made at the output's size, at the frame's scale).
@@ -12002,6 +12060,7 @@ bool RunFsr(RenderCommandList& cl, HostImage& image, HostImage* input = nullptr,
     std::memcpy(s_r.taaPrevVp, vp, sizeof(vp));
     s_r.taaHavePrev = true;
     s_r.taaLastFrame = s_r.frame;
+    s_r.fsrRanFrame = s_r.frame;
     return true;
 }
 
