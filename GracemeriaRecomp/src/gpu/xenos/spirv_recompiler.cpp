@@ -22,7 +22,8 @@ constexpr uint32_t kSharedSamplerIndices = 384, kSharedBooleans = 512, kSharedHa
     kSharedOverrideSampler = 740, kSharedPointParams = 804, kSharedPointConstantDiameter = 820, kSharedInterpolatorCentroid = 828,
     kSharedDrawFlags = 832, kSharedResolutionScale = 836, kSharedScaledTextures = 840, kSharedResolutionScaleY = 844,
     kSharedFallbackAddress = 848, kSharedDepthBias = 536, kSharedMotion = 856, kSharedAltScaledTextures = 920, kSharedAltScale = 924,
-    kSharedRelight = 932, kSharedTileTaps = 972, kSharedCloudRim = 976, kSharedSeaImage = 980, kSharedSea = 984;
+    kSharedRelight = 932, kSharedTileTaps = 972, kSharedCloudRim = 976, kSharedSeaImage = 980, kSharedSea = 984,
+    kSharedZero = 540;   // (SharedConstants::zero: always 0)
 // A motion output with no motion known (renderer.cpp kMotionUnknown).
 constexpr float kMotionUnknown = 30000.0f;
 
@@ -247,6 +248,15 @@ uint32_t SpirvRecompiler::SharedU32(uint32_t offset)
 }
 
 // Floats at any 4-byte offset (a vector may span two of the block's uint4s).
+Value SpirvRecompiler::Unknowable(Value v)
+{
+    const uint32_t utype = v.n == 1 ? b.U32() : b.TypeVector(b.U32(), v.n);
+    const uint32_t zero = SharedU32(kSharedZero);
+    const uint32_t zeros = v.n == 1 ? zero : b.Emit(spv::OpCompositeConstruct, utype, SpirvBuilder::Words(v.n, zero));
+    const uint32_t bits = b.Emit(spv::OpBitwiseOr, utype, { b.Emit(spv::OpBitcast, utype, { v.id }), zeros });
+    return { b.Emit(spv::OpBitcast, b.Vec(v.n), { bits }), v.n };
+}
+
 Value SpirvRecompiler::SharedVec(uint32_t offset, uint32_t n)
 {
     SpirvBuilder::Words parts;
@@ -840,6 +850,12 @@ void SpirvRecompiler::recompile(const VertexFetchInstruction& instr)
     {
         if (instr.expAdjust != 0)
             fetched = Arith(spv::OpFMul, fetched, { F(float(std::ldexp(1.0, int32_t(instr.expAdjust)))), 1 });
+        // What the driver could know about a fetched attribute (its range, from the vertex format) is hidden: AMD's
+        // driver for Vega (Vulkan 2.0.279) compiles a vertex shader that hands an attribute straight to the pixel
+        // shader together with it and faults in its optimiser on a pixel shader that works it through a chain of
+        // maximums, saturates and predicated instructions (a cutscene's character shader). The value is unchanged
+        // (its bits ORed with 0), and every shader stays optimised.
+        fetched = Unknowable(fetched);
         std::vector<uint32_t> components;
         uint32_t mask = 0;
         for (uint32_t i = 0; i < 4; i++)

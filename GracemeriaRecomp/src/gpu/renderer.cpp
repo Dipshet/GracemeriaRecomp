@@ -148,7 +148,7 @@ struct SharedConstants
     float alphaThreshold;
     uint32_t vertexIndexBase;          // guest vertex index of SV_VertexID 0 (the shaders' initial r0.x)
     float depthBias;                   // the constant polygon offset, added to the depth in the vertex shaders
-    uint32_t pad;
+    uint32_t zero;                     // always 0: the SPIR-V shaders OR values with it (SpirvRecompiler::Unknowable)
     uint64_t streamAddress[16];        // whole guest stream buffers for vertex fetches at computed indices
     uint32_t streamDwords[16];
     float pixelPosScale;               // guest pixels per host pixel of the render target (0.5 for promoted 4x MSAA)

@@ -145,6 +145,9 @@ private:
     // pixel shader's, 2 the shared block.
     uint32_t ConstantBuffer(uint32_t binding);
     uint32_t SharedU32(uint32_t offset);
+    // The value with its bits ORed with a shared word that is always 0: unchanged, but the driver's compiler can't
+    // know anything about it (its range from a vertex format, say).
+    Value Unknowable(Value v);
     Value SharedVec(uint32_t offset, uint32_t n);
     Value ResolutionScale();
     Value TileFiltered(uint32_t image, uint32_t sampler, Value uv, uint32_t key);
