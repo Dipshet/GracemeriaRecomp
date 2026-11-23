@@ -1143,13 +1143,18 @@ Value SpirvRecompiler::SeaReflection(Value cube)
     if (!fragCoordInput)
         return cube;
     const uint32_t f32 = b.F32();
+    // (Only with a reflection image, the draw's, the same for every pixel: the cube as it is otherwise.)
+    const uint32_t seaImage = SharedU32(kSharedSeaImage);
+    const uint32_t resultVar = b.LocalVariable(b.Vec(4));
+    b.Store(resultVar, Fit(cube, 4).id);
+    const SpirvBuilder::IfScope reflecting = b.BeginIf(b.Emit(spv::OpINotEqual, b.Bool(), { seaImage, b.ConstU32(0) }));
     const Value frag = Swizzle(LoadVar(fragCoordInput, 4), { 0, 1 });
     const Value row0 = SharedVec(kSharedSea, 3), row1 = SharedVec(kSharedSea + 12, 3), row2 = SharedVec(kSharedSea + 24, 3);
     const Value strength = SharedVec(kSharedSea + 36, 1);
     const Value h = Arith(spv::OpFAdd, Arith(spv::OpFAdd, Arith(spv::OpFMul, row0, Extract(frag, 0)), Arith(spv::OpFMul, row1, Extract(frag, 1))), row2);
     const Value w = Extract(h, 2);
     const Value uv = Arith(spv::OpFDiv, Swizzle(h, { 0, 1 }), w);
-    const uint32_t image = LoadImage(0, SharedU32(kSharedSeaImage));
+    const uint32_t image = LoadImage(0, seaImage);
     const uint32_t sampler = LoadSampler(b.ConstU32(0));   // linear, clamped
     const uint32_t sampled = b.Emit(spv::OpSampledImage, b.TypeSampledImage(b.TypeImage(spv::Dim2D)), { image, sampler });
     const Value reflection = { b.Emit(spv::OpImageSampleExplicitLod, b.Vec(4), { sampled, uv.id, uint32_t(spv::ImageOperandsLodMask), F(0.0f) }), 4 };
@@ -1158,7 +1163,9 @@ Value SpirvRecompiler::SeaReflection(Value cube)
     // cube + (reflection - cube) x amount: the cube's own value exactly where the amount is 0.
     const Value colour = Swizzle(cube, { 0, 1, 2 });
     const Value mixed = Arith(spv::OpFAdd, colour, Arith(spv::OpFMul, Arith(spv::OpFSub, Swizzle(reflection, { 0, 1, 2 }), colour), { amount, 1 }));
-    return { b.Emit(spv::OpCompositeConstruct, b.Vec(4), { mixed.id, Extract(cube, 3).id }), 4 };
+    b.Store(resultVar, b.Emit(spv::OpCompositeConstruct, b.Vec(4), { mixed.id, Extract(cube, 3).id }));
+    b.EndIf(reflecting);
+    return { b.Load(b.Vec(4), resultVar), 4 };
 }
 
 // The map's atlas pages filtered by the shader. A page (4096
@@ -1198,6 +1205,9 @@ Value SpirvRecompiler::TileFiltered(uint32_t image, uint32_t sampler, Value uv, 
         const uint32_t use = And(b.Emit(spv::OpUGreaterThanEqual, b.Bool(), { taps, b.ConstU32(2) }),
             b.Emit(spv::OpIEqual, b.Bool(), { b.Emit(spv::OpCompositeExtract, b.U32(), { sizeU, 0u }), b.ConstU32(4096) }));
         b.Store(tileCacheUseVar, use);
+        // (The walk and its setup only where the filter is on: a branch on the draw's tap count and the page's size,
+        // the same for every pixel, so the derivatives in it stay defined.)
+        const SpirvBuilder::IfScope walk = b.BeginIf(use);
         // The footprint, in the page's texels.
         const uint32_t pos = b.Emit(spv::OpFMul, vec2, { Fit(uv, 2).id, size });
         const uint32_t dx = b.Emit(spv::OpDPdx, vec2, { pos }), dy = b.Emit(spv::OpDPdy, vec2, { pos });
@@ -1244,6 +1254,7 @@ Value SpirvRecompiler::TileFiltered(uint32_t image, uint32_t sampler, Value uv, 
         b.Branch(header);
         b.Label(merge);
         b.Store(tileCacheVar, b.Emit(spv::OpVectorTimesScalar, vec4, { b.Load(vec4, sumVar), b.Emit(spv::OpFDiv, f32, { F(1.0f), n }) }));
+        b.EndIf(walk);
     }
     const uint32_t use = b.Load(b.Bool(), tileCacheUseVar);
     const uint32_t plainVar = b.LocalVariable(vec4);
@@ -1881,11 +1892,13 @@ void SpirvRecompiler::recompile(const uint8_t* shaderData, uint32_t variant)
                 interpolatorInputs[reg] = input(b.Vec(4), int32_t(reg));
             // At the centroid when the draw's sample control asks for it.
             const uint32_t centre = b.Load(b.Vec(4), interpolatorInputs[reg]);
-            const uint32_t centroid = b.Ext(b.Vec(4), GLSLstd450InterpolateAtCentroid, { interpolatorInputs[reg] });
+            // (One interpolation, not both and a select: the bit is the draw's, the same for every pixel.)
             const uint32_t bit = b.Emit(spv::OpBitwiseAnd, b.U32(), { SharedU32(kSharedInterpolatorCentroid), b.ConstU32(1u << reg) });
             const uint32_t useCentroid = b.Emit(spv::OpINotEqual, b.Bool(), { bit, b.ConstU32(0) });
-            b.Store(r[reg], b.Emit(spv::OpSelect, b.Vec(4), { b.Emit(spv::OpCompositeConstruct, BoolType(4), { useCentroid, useCentroid, useCentroid, useCentroid }),
-                centroid, centre }));
+            b.Store(r[reg], centre);
+            const SpirvBuilder::IfScope atCentroid = b.BeginIf(useCentroid);
+            b.Store(r[reg], b.Ext(b.Vec(4), GLSLstd450InterpolateAtCentroid, { interpolatorInputs[reg] }));
+            b.EndIf(atCentroid);
             initialized[reg] = true;
         }
     }
