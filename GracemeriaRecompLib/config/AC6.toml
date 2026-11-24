@@ -752,6 +752,18 @@ name = "WideLayerViewport"
 address = 0x82138530
 registers = ["r4", "r31"]
 
+# CAce6HudPlain::Draw (0x8223C660): the destroyed list, from its header's text call (0x8223D884) to the end of the loop
+# over its entries (0x8223DA94): the HUD edges option marks what is drawn in between as placed from the centre.
+[[midasm_hook]]
+name = "DestroyedListBegin"
+address = 0x8223D884
+registers = []
+
+[[midasm_hook]]
+name = "DestroyedListEnd"
+address = 0x8223DA94
+registers = []
+
 [[midasm_hook]]
 name = "WideLayerOrtho"
 address = 0x821385A8

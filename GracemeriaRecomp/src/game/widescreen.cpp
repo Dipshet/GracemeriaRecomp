@@ -955,6 +955,10 @@ std::pair<float, float> EdgeShift(EdgeMode mode, int sideX, int sideY, float x0,
 // was (the destroyed list), what moves with it wasn't. Between moves, a primitive keeps what it was.
 std::pair<float, float> s_plainCentre{ 640.0f, 360.0f }, s_plainBoresight{ 640.0f, 360.0f }, s_lastBoresight{ 640.0f, 360.0f };
 std::unordered_map<uint64_t, bool> s_lastPlain;
+// The destroyed list's primitives in the call in progress: the lists' counts at its start and end (mid-asm hooks
+// DestroyedListBegin / End). 0: not drawn, 1: started, 2: drawn.
+HudCounts s_listFrom{}, s_listTo{};
+int s_listState = 0;
 
 uint64_t BoxKey(float x0, float y0, float x1, float y1)
 {
@@ -1125,7 +1129,7 @@ void MoveHud(uint32_t r, const HudCounts& before, const HudCounts& after, EdgeMo
 // the pitch ladder's lines, over 300 x 200 px, stay alone), each group moved by PanelShift of its box.
 void MoveHudPanels(uint32_t r, const HudCounts& before, const HudCounts& after, EdgeMode mode)
 {
-    struct Item { HudList list; uint32_t address, count, vertexSize; float x0, x1, y0, y1; bool fromCentre = false; };
+    struct Item { HudList list; uint32_t address, count, vertexSize; float x0, x1, y0, y1; bool fromCentre = false; uint32_t index = 0; };
     std::vector<Item> items;
     const uint32_t b = r + kHudBlock0;
     // Line strips (entries 16 bytes: count +0, vertices +12, 16 bytes each) and polygons (24: +4, +20, 8).
@@ -1144,6 +1148,7 @@ void MoveHudPanels(uint32_t r, const HudCounts& before, const HudCounts& after, 
             if (!vertices || count == 0 || count > 4096)
                 continue;
             Item it{ l.id, vertices, count, l.vertexSize, 1e9f, -1e9f, 1e9f, -1e9f };
+            it.index = e;
             for (uint32_t v = 0; v < count; v++)
             {
                 const float x = F(vertices + v * l.vertexSize), y = F(vertices + v * l.vertexSize + 4);
@@ -1158,6 +1163,7 @@ void MoveHudPanels(uint32_t r, const HudCounts& before, const HudCounts& after, 
         const uint32_t s = sprites + e * 112;
         const float x = F(s + 72), y = F(s + 76), w = std::fabs(F(s + 84)), h = std::fabs(F(s + 88));
         items.push_back({ kSprites, s, 0, 0, x, x + w, y, y + h });
+        items.back().index = e;
     }
     const uint32_t rects = uint32_t(I(b + 80));
     for (uint32_t e = before.rects[0]; e < after.rects[0] && e < before.rects[0] + 256; e++)
@@ -1165,6 +1171,7 @@ void MoveHudPanels(uint32_t r, const HudCounts& before, const HudCounts& after, 
         const uint32_t q = rects + e * 20;
         const float x = float(I(q)), y = float(I(q + 4));
         items.push_back({ kRects, q, 0, 0, x, x + float(I(q + 8)), y, y + float(I(q + 12)) });
+        items.back().index = e;
     }
     // Moves an item's primitive (and its box).
     auto move = [](Item& it, float dx, float dy) {
@@ -1191,8 +1198,23 @@ void MoveHudPanels(uint32_t r, const HudCounts& before, const HudCounts& after, 
         }
         it.x0 += dx, it.x1 += dx, it.y0 += dy, it.y1 += dy;
     };
-    // The flight instruments: which primitives were placed from the centre, by how they moved since the last call.
-    if (mode == EdgeMode::Corners)
+    // The flight instruments: which primitives were placed from the centre. The destroyed list is, and nothing else: what
+    // was drawn between its start and its end (the mid-asm hooks). By how they moved since the last call (below) a new
+    // or scrolled entry had nothing to go by, and a list passed by other things (an enemy's target box near it) was torn
+    // apart, its pieces moved with the swaying HUD.
+    if (mode == EdgeMode::Corners && s_listState != 1)
+    {
+        for (Item& it : items)
+        {
+            const uint32_t from = it.list == kLines ? s_listFrom.lines[0] : it.list == kPolys ? s_listFrom.polys[0] :
+                it.list == kSprites ? s_listFrom.sprites[0] : s_listFrom.rects[0];
+            const uint32_t to = it.list == kLines ? s_listTo.lines[0] : it.list == kPolys ? s_listTo.polys[0] :
+                it.list == kSprites ? s_listTo.sprites[0] : s_listTo.rects[0];
+            it.fromCentre = s_listState == 2 && it.index >= from && it.index < to;
+        }
+    }
+    // (Without the hooks' marks: by how they moved since the last call.)
+    else if (mode == EdgeMode::Corners)
     {
         const float dx = s_plainBoresight.first - s_lastBoresight.first, dy = s_plainBoresight.second - s_lastBoresight.second;
         const bool moved = std::fabs(dx) > 0.5f || std::fabs(dy) > 0.5f;
@@ -1255,11 +1277,29 @@ void MoveHudPanels(uint32_t r, const HudCounts& before, const HudCounts& after, 
         g.x0 = std::min(g.x0, items[i].x0), g.x1 = std::max(g.x1, items[i].x1);
         g.y0 = std::min(g.y0, items[i].y0), g.y1 = std::max(g.y1, items[i].y1);
     }
+    // The destroyed list (the flight instruments' primitives from the centre) moves as one panel, by its top-left corner:
+    // its header, which stays put while entries come and go below it. By its groups' centres it was moved less the more
+    // entries it had (the move fades in from 100 px above the centre: four entries brought its centre down into the fade),
+    // and its count and name columns, apart, moved by different amounts.
+    Box list{};
+    bool hasList = false;
+    for (size_t i = 0; i < n; i++)
+        if (plain && items[i].fromCentre)
+        {
+            list = hasList ? Box{ std::min(list.x0, items[i].x0), std::max(list.x1, items[i].x1), std::min(list.y0, items[i].y0),
+                std::max(list.y1, items[i].y1) } : Box{ items[i].x0, items[i].x1, items[i].y0, items[i].y1 };
+            hasList = true;
+        }
+    const auto listShift = hasList ? PanelShift(mode, list.x0, list.x0, list.y0, list.y0, s_plainCentre.first, s_plainCentre.second) :
+        std::pair<float, float>{ 0.0f, 0.0f };
+    if (trace && hasList)
+        ac6::log::Info("HUD edges: the destroyed list at {:.1f} {:.1f} .. {:.1f} {:.1f}, moved {:.1f} {:.1f}", list.x0, list.y0, list.x1,
+            list.y1, listShift.first, listShift.second);
     for (size_t i = 0; i < n; i++)
     {
         const Box& g = boxes[find(uint32_t(i))];
         const auto origin = !plain ? std::pair<float, float>{ 640.0f, 360.0f } : items[i].fromCentre ? s_plainCentre : s_plainBoresight;
-        const auto [dx, dy] = PanelShift(mode, g.x0, g.x1, g.y0, g.y1, origin.first, origin.second);
+        const auto [dx, dy] = plain && items[i].fromCentre ? listShift : PanelShift(mode, g.x0, g.x1, g.y0, g.y1, origin.first, origin.second);
         if (dx != 0.0f || dy != 0.0f)
             move(items[i], dx, dy);
     }
@@ -1283,6 +1323,7 @@ void DrawHudElement(PPCContext& ctx, uint8_t* base, EdgeMode mode, int sideX, in
         const uint32_t centre = ctx.r4.u32, boresight = ctx.r5.u32;
         s_plainCentre = { F(centre), F(centre + 4) };
         s_plainBoresight = { F(boresight), F(boresight + 4) };
+        s_listState = 0;
         Original(ctx, base);
     }
     else
@@ -1292,6 +1333,26 @@ void DrawHudElement(PPCContext& ctx, uint8_t* base, EdgeMode mode, int sideX, in
 }
 
 } // namespace
+
+// CAce6HudPlain::Draw's destroyed list, its header (0x8223D884) to the end of its loop (0x8223DA94): the lists' counts
+// at each end, so the element's move knows its primitives (only while the HUD edges option moves the element).
+void DestroyedListBegin()
+{
+    if (s_hudRenderer && HudEdges() != 0.0 && Wide() != 1.0f)
+    {
+        s_listFrom = CountHud(s_hudRenderer);
+        s_listState = 1;
+    }
+}
+
+void DestroyedListEnd()
+{
+    if (s_listState == 1)
+    {
+        s_listTo = CountHud(s_hudRenderer);
+        s_listState = 2;
+    }
+}
 
 // The HUD draw (CAce6HudImpl slot 15, r3 = the HUD): its renderer interface for the element wrappers below.
 extern "C" PPC_FUNC(__imp__sub_8223DDB0);
