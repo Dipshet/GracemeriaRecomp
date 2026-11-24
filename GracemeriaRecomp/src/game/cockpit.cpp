@@ -14,8 +14,15 @@
 // and while one executes (0x82364038, which issues the draw) its group is known. The cockpit groups' draws record their
 // model-space boxes. The body's draws keep only the triangles not wholly inside one of them: the spine, the rear
 // fuselage, the fin and the tailplanes.
+//
+// A tag holds only while the cockpit view is drawn (its last submission within three renderer frames), and the tags are
+// dropped when the view starts again. They are kept by the request's address, which the game reuses: counted by
+// submissions alone, the last ones stayed current after the view was left (no submission moved them on), and a later
+// draw request at one of those addresses in the chase view was taken for the body, with no cockpit to keep it outside
+// of, and dropped.
 #include "game/cockpit.h"
 #include "game/widescreen.h"
+#include "gpu/renderer.h"
 #include "gpu/video.h"
 
 #include "endian.h"
@@ -45,6 +52,8 @@ thread_local int t_executeGroup = -1;   // the group of the request executing (t
 std::mutex s_mutex;
 std::unordered_map<uint32_t, std::pair<int, uint32_t>> s_requests;   // request -> group, submission generation
 uint32_t s_generation = 0;               // one per cockpit submission of group 3 (about a frame)
+uint64_t s_cockpitFrame = 0;             // the renderer's frame at the last one (s_mutex)
+constexpr uint64_t kCockpitFrames = 3;   // a tag holds while the view was drawn this recently
 
 } // namespace
 
@@ -74,6 +83,10 @@ PPC_FUNC(sub_822247F0)
     {
         {
             std::lock_guard lock(game::s_mutex);
+            const uint64_t now = gpu::RendererFrame();
+            if (now - game::s_cockpitFrame > game::kCockpitFrames)
+                game::s_requests.clear();   // the view (again) after a while: no tag of before holds
+            game::s_cockpitFrame = now;
             game::s_generation++;
         }
         uint8_t& flag = *g_memory.As<uint8_t>(model + 259);
@@ -115,6 +128,8 @@ int RequestGroup(uint32_t request)
     if (!game::CockpitBody())
         return -1;
     std::lock_guard lock(game::s_mutex);
+    if (gpu::RendererFrame() - game::s_cockpitFrame > game::kCockpitFrames)
+        return -1;   // not in the cockpit view (any more)
     if (auto it = game::s_requests.find(request); it != game::s_requests.end() && game::s_generation - it->second.second <= 2)
         return it->second.first;
     return -1;
