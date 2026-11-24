@@ -852,7 +852,32 @@ void Video::AcquireImage()
         CreateFramebuffers();
     }
     std::unique_lock lock(swapMutex);
-    if (!swapChain->acquireTexture(acquireSemaphores[slot].get(), &swapChainIndex))
+    // The compositor gives an image back within a few refreshes; one that keeps them all (a hidden window on some
+    // Linux desktops, a stalled compositor) would hold the frame, and the game, for as long as it does. So the wait is
+    // half a second, then, while no image comes, none at all: the frames aren't shown and the game goes on, as when
+    // the window is minimised.
+    static bool noImages = false;
+    static std::chrono::steady_clock::time_point noImagesSince;
+    swapChain->setAcquireTimeout(noImages ? 0 : 500000000ull);
+    const bool acquired = swapChain->acquireTexture(acquireSemaphores[slot].get(), &swapChainIndex);
+    if (!acquired && swapChain->acquireTimedOut())
+    {
+        if (!noImages)
+        {
+            noImages = true;
+            noImagesSince = std::chrono::steady_clock::now();
+            log::Warn("Swap chain: no image from the compositor in 0.5 s (the window hidden?): frames aren't shown until "
+                      "it gives one back");
+        }
+        acquireFailed = true;
+        return;
+    }
+    if (noImages)
+    {
+        noImages = false;
+        log::Info("Swap chain: images again after {:.1f} s", std::chrono::duration<double>(std::chrono::steady_clock::now() - noImagesSince).count());
+    }
+    if (!acquired)
     {
         // Out of date (the display, the output's mode changed under it): made again once. A submission waiting on an
         // acquire that didn't happen would never run.

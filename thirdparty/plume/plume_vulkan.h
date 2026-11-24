@@ -290,6 +290,10 @@ namespace plume {
         RenderTexture *getTexture(uint32_t textureIndex) override;
         uint32_t getTextureCount() const override;
         bool acquireTexture(RenderCommandSemaphore *signalSemaphore, uint32_t *textureIndex) override;
+        void setAcquireTimeout(uint64_t nanoseconds) override { acquireTimeout = nanoseconds; }
+        bool acquireTimedOut() const override { return acquireTimedOutLast; }
+        uint64_t acquireTimeout = UINT64_MAX;
+        bool acquireTimedOutLast = false;
         RenderWindow getWindow() const override;
         bool isEmpty() const override;
         uint32_t getRefreshRate() const override;

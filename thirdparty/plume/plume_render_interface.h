@@ -110,6 +110,11 @@ namespace plume {
         // The swap chain made again in another format and colour space, on the same surface (AC6: HDR switched while
         // running). False, and nothing changed, when the surface doesn't offer that pair.
         virtual bool setFormat(RenderFormat format, RenderColorSpace colorSpace) { return false; }
+
+        // How long acquireTexture waits for an image, in nanoseconds (AC6; UINT64_MAX, the default: as long as it
+        // takes). When it times out it returns false and acquireTimedOut() is true: no image, the swap chain fine.
+        virtual void setAcquireTimeout(uint64_t nanoseconds) { (void)nanoseconds; }
+        virtual bool acquireTimedOut() const { return false; }
     };
 
     struct RenderFramebuffer {

@@ -2961,8 +2961,10 @@ namespace plume {
         assert(signalSemaphore != nullptr);
 
         VulkanCommandSemaphore *interfaceSemaphore = static_cast<VulkanCommandSemaphore *>(signalSemaphore);
-        VkResult res = vkAcquireNextImageKHR(commandQueue->device->vk, vk, UINT64_MAX, interfaceSemaphore->vk, VK_NULL_HANDLE, textureIndex);
+        VkResult res = vkAcquireNextImageKHR(commandQueue->device->vk, vk, acquireTimeout, interfaceSemaphore->vk, VK_NULL_HANDLE, textureIndex);
         NoteVulkanResult(res);
+        // (No image in the time given: the semaphore isn't signalled, nothing to undo.)
+        acquireTimedOutLast = (res == VK_TIMEOUT) || (res == VK_NOT_READY);
         if ((res != VK_SUCCESS) && (res != VK_SUBOPTIMAL_KHR)) {
             return false;
         }
