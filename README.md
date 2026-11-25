@@ -219,7 +219,7 @@ downloads it into `toolchain/sniper` (1.2 GB) and prints its path, then
   [RenoDX](https://github.com/clshortfuse/renodx) (HDR tone mappers), [LuaJIT](https://luajit.org) (Lua mods),
   [o1heap](https://github.com/pavel-kirienko/o1heap),
   [xxHash](https://github.com/Cyan4973/xxHash) and the [Share Tech](https://fonts.google.com/specimen/Share+Tech) fonts
-- [Ostrich](https://ostrichmods.com/), the PlayStation button glyphs
+- [Ostrich](https://ostrichmods.com/), the game's icon and the PlayStation button glyphs
 
 ## Licence
 
