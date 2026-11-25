@@ -1301,6 +1301,7 @@ namespace plume {
         bool dynamicDepthBiasEnabled = false;
         bool dynamicBlendConstantsEnabled = false;   // AC6 runtime addition: blend constants set per draw (setBlendConstants)
         bool dynamicLineWidthEnabled = false;        // AC6 runtime addition: line width set per draw (setLineWidth), line topologies
+        bool rectangularLines = false;               // AC6 runtime addition: lines as rectangles along them (rectangularLinesSupported), else Bresenham's
         bool depthEnabled = false;
         bool depthWriteEnabled = false;
         bool stencilEnabled = false;

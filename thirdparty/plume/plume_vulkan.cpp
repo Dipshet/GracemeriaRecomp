@@ -1605,11 +1605,12 @@ namespace plume {
         rasterization.rasterizerDiscardEnable = VK_FALSE;
         rasterization.polygonMode = VK_POLYGON_MODE_FILL;
         rasterization.lineWidth = 1.0f;
-        // AC6: line pipelines (they have the dynamic line width) rasterize as Bresenham lines (bresenhamLinesSupported).
+        // AC6: line pipelines (they have the dynamic line width) rasterize as Bresenham lines (bresenhamLinesSupported), or
+        // as rectangles along them where the pipeline asks (rectangularLines).
         VkPipelineRasterizationLineStateCreateInfoEXT lineState = {};
-        if (desc.dynamicLineWidthEnabled && device->bresenhamLinesSupported) {
+        if (desc.dynamicLineWidthEnabled && device->lineMode(desc.rectangularLines) != VK_LINE_RASTERIZATION_MODE_DEFAULT_EXT) {
             lineState.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT;
-            lineState.lineRasterizationMode = VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT;
+            lineState.lineRasterizationMode = device->lineMode(desc.rectangularLines);
             rasterization.pNext = &lineState;
         }
         rasterization.cullMode = toVk(desc.cullMode);
@@ -1857,7 +1858,7 @@ namespace plume {
     }
 
     VkPipeline VulkanDevice::preRasterizationLibrary(const VulkanPipelineLayout *layout, const VulkanShader *shader, const RenderSpecConstant *specConstants,
-        uint32_t specConstantsCount, bool depthClamp, bool dynamicLineWidth)
+        uint32_t specConstantsCount, bool depthClamp, bool dynamicLineWidth, bool rectangularLines)
     {
         std::string key = "PR";
         appendValue(key, layout->vk);
@@ -1865,7 +1866,7 @@ namespace plume {
         appendSpec(key, specConstants, specConstantsCount);
         appendValue(key, depthClampDynamicSupported ? false : depthClamp);
         if (dynamicLineWidth) {
-            key += "LW";   // (keys without it stay as they were)
+            key += rectangularLines ? "LWR" : "LW";   // (keys without it stay as they were)
         }
         return pipelineLibrary(key, [&] {
             std::vector<VkSpecializationMapEntry> specEntries(specConstantsCount);
@@ -1883,9 +1884,9 @@ namespace plume {
             rasterization.polygonMode = VK_POLYGON_MODE_FILL;
             rasterization.lineWidth = 1.0f;
             VkPipelineRasterizationLineStateCreateInfoEXT lineState = {};
-            if (dynamicLineWidth && bresenhamLinesSupported) {   // (a line pipeline's: Bresenham lines)
+            if (dynamicLineWidth && lineMode(rectangularLines) != VK_LINE_RASTERIZATION_MODE_DEFAULT_EXT) {   // (a line pipeline's)
                 lineState.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT;
-                lineState.lineRasterizationMode = VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT;
+                lineState.lineRasterizationMode = lineMode(rectangularLines);
                 rasterization.pNext = &lineState;
             }
             std::vector<VkDynamicState> dynamicStates(kPreRasterizationDynamic, kPreRasterizationDynamic + preRasterizationDynamicCount(this));
@@ -2059,7 +2060,7 @@ namespace plume {
             });
 
             const VkPipeline preRasterization = device->preRasterizationLibrary(layout, vertexShader, desc.specConstants, desc.specConstantsCount,
-                rasterization.depthClampEnable, desc.dynamicLineWidthEnabled);
+                rasterization.depthClampEnable, desc.dynamicLineWidthEnabled, desc.rectangularLines);
             const VkPipeline fragmentShader = device->fragmentShaderLibrary(layout, pixelShader, desc.specConstants, desc.specConstantsCount);
             if (vertexInputLibrary != VK_NULL_HANDLE && fragmentOutputLibrary != VK_NULL_HANDLE && preRasterization != VK_NULL_HANDLE &&
                 fragmentShader != VK_NULL_HANDLE) {
@@ -4822,9 +4823,11 @@ namespace plume {
         }
 
         bresenhamLinesSupported = lineRasterizationFeatures.bresenhamLines && [] { const char *v = getenv("AC6_BRESENHAM_LINES"); return !(v != nullptr && strcmp(v, "0") == 0); }();
-        if (bresenhamLinesSupported) {
+        rectangularLinesSupported = lineRasterizationFeatures.rectangularLines && [] { const char *v = getenv("AC6_RECTANGULAR_LINES"); return !(v != nullptr && strcmp(v, "0") == 0); }();
+        if (bresenhamLinesSupported || rectangularLinesSupported) {
             VkPhysicalDeviceLineRasterizationFeaturesEXT &f = lineRasterizationFeatures;
-            f.rectangularLines = VK_FALSE;
+            f.bresenhamLines = bresenhamLinesSupported ? VK_TRUE : VK_FALSE;
+            f.rectangularLines = rectangularLinesSupported ? VK_TRUE : VK_FALSE;
             f.smoothLines = VK_FALSE;
             f.stippledRectangularLines = VK_FALSE;
             f.stippledBresenhamLines = VK_FALSE;

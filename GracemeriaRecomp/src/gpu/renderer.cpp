@@ -2005,6 +2005,7 @@ float VolSetting(const char* name, float fallback)
 constexpr uint32_t kSpecVolHarvest = 1u << 30;   // a pipeline key bit: the draw's pipeline gets the harvesting stage
 constexpr uint32_t kSpecLateBounds = 1u << 29;   // and the late mesh capture stage
 constexpr uint32_t kSpecLine2D = 1u << 28;       // and the 2D lines' rectangles
+constexpr uint32_t kSpecSceneLine = 1u << 27;    // and the scene's lines as rectangles along them (rectangularLines)
 constexpr uint32_t kVolCapacity = 16384;         // particle records per frame
 constexpr uint32_t kVolRecord = 80;              // bytes a record (volumetrics.hlsl)
 
@@ -4974,7 +4975,8 @@ struct PipelineState
 {
     uint32_t topology = 0;                  // RenderPrimitiveTopology
     uint32_t spec = 0;                      // the shaders' specialization constant: 0 where both read the draw flags
-    uint32_t geometry = 0;                  // 0: none, 1: the smoke harvest's stage, 2: the late meshes' bounds, 3: 2D line rectangles
+    uint32_t geometry = 0;                  // 0: none, 1: the smoke harvest's stage, 2: the late meshes' bounds, 3: 2D line rectangles,
+                                            // 4: none, the lines rectangles along them (the scene's above 720p)
     uint32_t colorFormat = 0;               // RenderFormat, UNKNOWN: no colour target
     uint32_t motion = 0;                    // TAA's motion image: 0 not bound, 1 bound but not written, 2 written
     uint32_t blend[8] = {};                 // enabled, source, destination, operation, the alpha's three, the write mask
@@ -4994,8 +4996,9 @@ bool ReadPipelineState(uint32_t device, const HostShader& vs, const HostShader& 
 {
     st = PipelineState{};
     st.topology = uint32_t(topology);
-    st.geometry = (specConstants & kSpecVolHarvest) ? 1 : (specConstants & kSpecLateBounds) ? 2 : (specConstants & kSpecLine2D) ? 3 : 0;
-    specConstants &= ~(kSpecVolHarvest | kSpecLateBounds | kSpecLine2D);
+    st.geometry = (specConstants & kSpecVolHarvest) ? 1 : (specConstants & kSpecLateBounds) ? 2 : (specConstants & kSpecLine2D) ? 3 :
+        (specConstants & kSpecSceneLine) ? 4 : 0;
+    specConstants &= ~(kSpecVolHarvest | kSpecLateBounds | kSpecLine2D | kSpecSceneLine);
     RenderBlendDesc blend = RenderBlendDesc::Copy();
     const uint32_t control = t_blendOverride ? t_blendOverride : U32(device + kDevBlendControl);
     if (control != kBlendDisabled)
@@ -5197,6 +5200,7 @@ std::unique_ptr<RenderPipeline> BuildPipeline(const PipelineState& st, const Hos
     desc.dynamicBlendConstantsEnabled = st.blendConstant != 0;
     desc.dynamicLineWidthEnabled = desc.primitiveTopology == RenderPrimitiveTopology::LINE_LIST ||
         desc.primitiveTopology == RenderPrimitiveTopology::LINE_STRIP;   // (LineWidth, set per draw)
+    desc.rectangularLines = st.geometry == 4;
     desc.depthClipEnabled = st.depthClip != 0;
     desc.multisampling.sampleCount = st.samples;
     desc.alphaToCoverageEnabled = st.alphaToCoverage != 0;
@@ -5461,7 +5465,7 @@ private:
     {
         // (A list from elsewhere, or damaged past its hashes: only what a draw could have asked for.)
         const PipelineState& st = r.state;
-        if (vs.pixel || !ps.pixel || !vs.ok || !ps.ok || !vs.shader || !ps.shader || st.geometry > 2 ||
+        if (vs.pixel || !ps.pixel || !vs.ok || !ps.ok || !vs.shader || !ps.shader || st.geometry == 3 || st.geometry > 4 ||
             (st.geometry == 1 && !s_r.volHarvestGs) || (st.geometry == 2 && !s_r.lateBoundsGs) || st.samples == 0 || st.samples > 8 ||
             st.topology > uint32_t(RenderPrimitiveTopology::TRIANGLE_FAN) || st.motion > 5 || st.cull > uint32_t(RenderCullMode::BACK) ||
             st.depthFunction > uint32_t(RenderComparisonFunction::ALWAYS) || st.colorFormat >= uint32_t(RenderFormat::MAX) ||
@@ -9299,8 +9303,14 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
     const uint32_t lineHalfWidth = U32(device + kDevPointSize + 8) & 0xFFFF;
     const bool lineRects = s_r.line2dGs && lineTopology && (t_uiDraw || !(U32(device + kDevDepthControl) & 2)) && targets.samples == 1 &&
         (lineHalfWidth == 0 || lineHalfWidth == 8) && volLayout < 0 && !lateCaptureEnd;
+    // The scene's lines (the rest: depth-tested, the effects' spark streaks and kin) above 720p as rectangles along them: a
+    // wide Bresenham line (LineWidth scales them: 4 host pixels at 1440p on the effects surface) is a column of
+    // axis-aligned blocks, the sparks' chunky rectangles. At 720p as before.
+    // (The frame's scale alone: the effects surface's own 2, the console's 4x samples drawn as pixels, is there at 720p too.)
+    const bool sceneLine = lineTopology && !lineRects && volLayout < 0 && !lateCaptureEnd && std::min(s_r.resX, s_r.resY) > 1.001f;
     const PendingPipeline* pipeline = GetPipeline(device, *vs, *ps, layout, topology,
-        specConstants | (volLayout >= 0 ? kSpecVolHarvest : 0) | (lateCaptureEnd ? kSpecLateBounds : 0) | (lineRects ? kSpecLine2D : 0), targets);
+        specConstants | (volLayout >= 0 ? kSpecVolHarvest : 0) | (lateCaptureEnd ? kSpecLateBounds : 0) | (lineRects ? kSpecLine2D : 0) |
+        (sceneLine ? kSpecSceneLine : 0), targets);
     if (pipeline && targets.depth && (U32(device + kDevDepthControl) & 6) == 6)
         NoteDepthWrite(targets.depth);
     if (pipeline && targets.color && (U32(device + kDevColorMask) & 0xF))
@@ -9639,8 +9649,11 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
     SetScissor(cl, RenderRect(0, 0, int32_t(targets.width), int32_t(targets.height)));
     SetPipeline(cl, pipeline);
     const bool lines = lineDraw;
+    // (The scene's lines above 720p, sceneLine: at the frame's scale alone. On the effects surface, the console's 640x360 4x
+    // MSAA drawn here as pixels at twice its size, its scale 2 made a spark streak 4 host pixels wide at 1440p with hard
+    // edges, where the console's was one of its coarse pixels softened by its samples: chunky rectangles.)
     if (lines)
-        cl.setLineWidth(LineWidth(device, targets.scale));
+        cl.setLineWidth(LineWidth(device, sceneLine ? 1u : targets.scale));
     if (UsesBlendConstant(U32(device + kDevBlendControl)))
     {
         float constants[4];

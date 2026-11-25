@@ -489,6 +489,13 @@ namespace plume {
         // drawn. The driver's default may draw lines as thin rectangles, which leave a corner on a pixel centre to
         // neither segment. AC6_BRESENHAM_LINES=0: the default.
         bool bresenhamLinesSupported = false;
+        // AC6: its rectangular lines, for pipelines that ask (rectangularLines): a wide line a rectangle along it, where a
+        // wide Bresenham line is a column of axis-aligned blocks. AC6_RECTANGULAR_LINES=0: Bresenham's for them too.
+        bool rectangularLinesSupported = false;
+        VkLineRasterizationModeEXT lineMode(bool rectangular) const {
+            return rectangular && rectangularLinesSupported ? VK_LINE_RASTERIZATION_MODE_RECTANGULAR_EXT
+                : bresenhamLinesSupported ? VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT : VK_LINE_RASTERIZATION_MODE_DEFAULT_EXT;
+        }
         // AC6: the Vulkan 1.3 path: dynamic rendering with the rasterizer and depth/stencil state dynamic, depth clamp
         // dynamic too where VK_EXT_extended_dynamic_state3 allows, and pipelines linked from libraries
         // (VK_EXT_graphics_pipeline_library with fast linking): per shader, compiled once, ahead of time.
@@ -501,7 +508,7 @@ namespace plume {
         uint64_t pipelineLibrariesBuilt = 0;   // AC6: under pipelineLibraryMutex (diagnostics)
         VkPipeline pipelineLibrary(const std::string &key, const std::function<VkPipeline()> &create);
         VkPipeline preRasterizationLibrary(const VulkanPipelineLayout *layout, const VulkanShader *shader, const RenderSpecConstant *specConstants,
-            uint32_t specConstantsCount, bool depthClamp, bool dynamicLineWidth = false);
+            uint32_t specConstantsCount, bool depthClamp, bool dynamicLineWidth = false, bool rectangularLines = false);
         VkPipeline fragmentShaderLibrary(const VulkanPipelineLayout *layout, const VulkanShader *shader, const RenderSpecConstant *specConstants,
             uint32_t specConstantsCount);
         void prepareShaderLibrary(const RenderPipelineLayout *pipelineLayout, const RenderShader *shader, bool pixel,
