@@ -2,11 +2,13 @@
 // text-only European languages.
 #include "endian.h"
 #include "game/localization.h"
+#include "settings.h"
 #include "log.h"
 #include "memory.h"
 #include "ppc.h"
 
 #include <cstdlib>
+#include <string>
 #include <string_view>
 
 namespace {
@@ -130,4 +132,72 @@ void TitleScreenPackage(PPCRegister& r4)
 {
     if (const uint32_t package = EuropeanPackage(179))
         r4.u64 = package;
+}
+
+// Force Japanese Audio (AC6_FORCE_JAPANESE_AUDIO): the voice is Japanese regardless what the game's option says. The game's
+// sound object loads its voice pack and its cutscene pack together by one flag, 0 Japanese, else English: at boot
+// (CNuSound vtable slot 1, 0x82121308, the flag in r6) and again whenever they're switched (slot 92, 0x82124968, the flag
+// in r4: at a mission's start, always English outside Japan, and by the Japanese edition's Language settings menu). The
+// subtitles follow the game's own voice and subtitle option (the save's, read by 0x82273B70), which outside Japan is
+// always a subtitled one in the game's language.
+// The mission's voice script goes with the voices: its mission package holds one per voice pack (item 11 Japanese, 12
+// English: the clips its lines play, numbered differently in the two packs), and the mission manager's set-up (its
+// option switch, 0x82098510 and its twins in the other two managers) takes 12 for the English voices. With the English
+// script on the Japanese pack the lines played the wrong clips, cut off: VoiceScriptItem takes 11 there.
+namespace {
+
+bool JapaneseVoices()
+{
+    static const bool forced = [] {
+        const std::string v = ac6::settings::Get("AC6_FORCE_JAPANESE_AUDIO");
+        return v == "1" || v == "true";
+    }();
+    return forced;
+}
+
+} // namespace
+
+void VoiceScriptItem(PPCRegister& r4)
+{
+    if (JapaneseVoices() && r4.u32 == 12)
+    {
+        r4.u64 = 11;
+        static bool logged = false;
+        if (!logged)
+        {
+            logged = true;
+            ac6::log::Info("Force Japanese Audio: the mission's Japanese voice script (item 11)");
+        }
+    }
+}
+
+extern "C" PPC_FUNC(__imp__sub_82121308);
+PPC_FUNC(sub_82121308)
+{
+    if (JapaneseVoices())
+    {
+        ctx.r6.u64 = 0;
+        ac6::log::Info("Force Japanese Audio: the Japanese voice and cutscene packs");
+    }
+    __imp__sub_82121308(ctx, base);
+}
+
+extern "C" PPC_FUNC(__imp__sub_82124968);
+PPC_FUNC(sub_82124968)
+{
+    if (JapaneseVoices())
+        ctx.r4.u64 = 0;
+    __imp__sub_82124968(ctx, base);
+}
+
+// The game's voice-language query (0x820F7DA0: *r4 = 0 for Japanese voices, only in the Japanese edition with a
+// Japanese-voice option, else 1). The briefing times its lines by it (a Japanese and an English schedule for its own
+// clips, which follow the voice packs): with Force Japanese Audio it answers Japanese.
+extern "C" PPC_FUNC(__imp__sub_820F7DA0);
+PPC_FUNC(sub_820F7DA0)
+{
+    const uint32_t out = ctx.r4.u32;
+    __imp__sub_820F7DA0(ctx, base);
+    if (JapaneseVoices() && out)
+        *ac6::g_memory.As<ac6::be<uint32_t>>(out) = 0u;
 }

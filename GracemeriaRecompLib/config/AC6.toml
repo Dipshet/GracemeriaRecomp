@@ -721,6 +721,44 @@ name = "TitleScreenPackage"
 address = 0x821B56E4
 registers = ["r4"]
 
+# The mission's voice script (game/language.cpp): r4 = the mission package's item for it, 12 (the English voices') just
+# loaded, then its count; the three mission managers' set-ups, the English-voice branch.
+[[midasm_hook]]
+name = "VoiceScriptItem"
+address = 0x82098754
+registers = ["r4"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "VoiceScriptItem"
+address = 0x82098764
+registers = ["r4"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "VoiceScriptItem"
+address = 0x8219D39C
+registers = ["r4"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "VoiceScriptItem"
+address = 0x8219D3AC
+registers = ["r4"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "VoiceScriptItem"
+address = 0x821A0E6C
+registers = ["r4"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "VoiceScriptItem"
+address = 0x821A0E7C
+registers = ["r4"]
+after_instruction = true
+
 # The FOV option (AC6_FOV): the three render views' (EffectScene::RenderView 0x82099370 and its twins 0x8219DFB8 /
 # 0x821A1A88) reads of the main camera's field of view for their object jobs (0x820A15F8, f1), f1 just loaded.
 [[midasm_hook]]

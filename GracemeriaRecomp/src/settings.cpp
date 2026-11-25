@@ -371,6 +371,10 @@ const Setting kSettings[] = {
       "The game's language\n"
       "English and Japanese: With dubbing\n"
       "Default: English" },
+    { "game", "force_japanese_audio", "AC6_FORCE_JAPANESE_AUDIO", kBool, "false",
+      "Overrides the voice language to Japanese regardless of the in-game settings\n"
+      "Allows Japanese audio with English subtitles (or other languages)\n"
+      "Default: Off" },
     { "game", "profile_name", "AC6_PROFILE_NAME", kText, "\"Player\"", "Your profile's name in the game\n"
                                                                        "Letters, digits and spaces, up to 15 characters\n"
                                                                        "Default: Player" },
@@ -599,6 +603,7 @@ const Ui kUi[] = {
     // Each language in its own name.
     { "language", "Game", "Language",
       "english=English|japanese=日本語|german=Deutsch|french=Français|spanish=Español|italian=Italiano", 0, 0, 0, "english", "GENERAL" },
+    { "force_japanese_audio", "Game", "Force Japanese Audio", "", 0, 0, 0, "0", "GENERAL" },
     { "profile_name", "Game", "Profile name", "", 0, 0, 0, "Player", "GENERAL" },
     { "dlc", "Game", "Use DLC", "", 0, 0, 0, "1", "DOWNLOADABLE CONTENT" },
     // A factor, shown as a percentage (0 the earlier Off, 1 the earlier On).
