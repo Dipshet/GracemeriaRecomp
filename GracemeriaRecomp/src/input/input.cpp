@@ -575,8 +575,32 @@ bool Touched(const PadState& s)
         std::abs(int(s.thumbLY)) > kHalf || std::abs(int(s.thumbRX)) > kHalf || std::abs(int(s.thumbRY)) > kHalf;
 }
 
+// Allow background input (AC6_BACKGROUND_INPUT): controllers keep working while the window isn't focused. SDL drops
+// controller events without the focus unless its hint says otherwise, and it follows the hint as it changes (live).
+// The keyboard and mouse stay with the focus.
+void ApplyBackgroundInput()
+{
+    static uint64_t generation = UINT64_MAX;
+    if (const uint64_t now = settings::Generation(); now != generation)
+    {
+        generation = now;
+        const std::string v = settings::Get("AC6_BACKGROUND_INPUT");
+        // (The tests' virtual stick, AC6_TEST_JOYSTICK, needs background events whatever the setting.)
+        static const bool testStick = [] { const char* t = std::getenv("AC6_TEST_JOYSTICK"); return t && *t; }();
+        const bool on = v == "1" || v == "true" || testStick;
+        SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, on ? "1" : "0");
+        static int logged = -1;
+        if (logged != int(on))
+        {
+            logged = int(on);
+            log::Info("Background input: {}", on ? "on (controllers work without the window's focus)" : "off");
+        }
+    }
+}
+
 void Update()
 {
+    ApplyBackgroundInput();
     PadState next[kUsers];
     const uint64_t nowMs = SDL_GetTicks();
     PadState slots[kUsers];

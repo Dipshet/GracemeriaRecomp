@@ -270,6 +270,10 @@ const Setting kSettings[] = {
       "Enables keyboard and mouse controls\n"
       "Default keybinds follow Ace Combat 7 scheme\n"
       "Default: Off" },
+    { "controls", "background_input", "AC6_BACKGROUND_INPUT", kBool, "false",
+      "Controllers keep working while the game's window isn't focused\n"
+      "Keyboard and mouse still need the window focused\n"
+      "Default: Off" },
     { "controls", "cursor_hide_seconds", "AC6_CURSOR_HIDE_SECONDS", kNumber, "3", "Hides the mouse cursor once it hasn't moved for this many seconds\n"
                                                                                   "0 never hides it\n"
                                                                                   "Default: 3" },
@@ -567,6 +571,7 @@ const Ui kUi[] = {
     { "hdr_lit_highlights", "", "Lit highlights", "", 0, 100, 1, "100", "HDR GRADING" },
     { "hdr_stripes", "Debug", "HDR brightness stripes", "off=Off|output=Display brightness|scene=Game's values", 0, 0, 0, "off", "RENDERING" },
     { "keyboard_mouse", "Controls", "Keyboard and mouse", "", 0, 0, 0, "0", "GENERAL" },
+    { "background_input", "Controls", "Allow background input", "", 0, 0, 0, "0", "GENERAL" },
     { "cursor_hide_seconds", "Controls", "Hide idle cursor after (s)", "", 0, 30, 0.5, "3", "GENERAL" },
     { "mouse_controls", "Controls", "Mouse controls", "aircraft=Aircraft|camera=Camera", 0, 0, 0, "aircraft", "MOUSE" },
     { "steer_model", "Controls", "Steering model", "velocity=Velocity|position=Position", 0, 0, 0, "velocity", "MOUSE" },
