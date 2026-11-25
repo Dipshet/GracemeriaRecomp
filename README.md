@@ -1,3 +1,7 @@
+<p align="center">
+    <img src="assets/icon/gmrc.png" width="160" alt="GracemeriaRecomp logo">
+</p>
+
 <h1 align="center">AC6:GracemeriaRecomp</h1>
 
 <p align="center">
@@ -119,6 +123,7 @@ The **mouse** steers the aircraft. Hold `Left Alt` to look around with the mouse
 | Key | Action |
 |-|-|
 | F4 | Settings overlay (also **LS + RS** on a controller) |
+| Alt + Enter | Switch between fullscreen and windowed |
 | F5 | Reload the texture replacements from their files |
 | F11 | (Debug) Save the last few seconds as pictures |
 | F12 | (Debug) Save a replayable capture of the last few seconds |
@@ -134,8 +139,8 @@ slower, but the log then names the draw where the graphics card fails. Reproduce
 
 - **Only the North American release** is supported.
 - **European languages are experimental:** German, French, Spanish and Italian use older text on the North American
-  disc that the game was never released or tested with. Some text is in the wrong language, button glyphs are drawn
-  over text, the HUD has no accented letters, and the game may crash or misbehave.
+  disc that the game was never released or tested with. Some text may be wrong or left in English, button glyphs are
+  drawn over text, the HUD has no accented letters, and the game may crash or misbehave.
   If something goes wrong, switch the language to English and see whether it happens again before reporting it.
 - **Old AMD drivers (before 2022):** in the cockpit view, the canopy can show through the instrument panel. Turn
   Dynamic rendering off (Debug tab, Graphics driver).
