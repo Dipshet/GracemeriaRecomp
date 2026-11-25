@@ -1882,6 +1882,21 @@ int AoTerrainMode()
     return mode;
 }
 
+// The Mission colour tint setting (AC6_COLOUR_TINT, live): off, the game's final grade loses its per-channel tint (Draw's
+// constant upload).
+bool ColourTint()
+{
+    static std::atomic<uint64_t> generation{ UINT64_MAX };
+    static std::atomic<bool> on{ true };
+    if (const uint64_t now = settings::Generation(); generation.load(std::memory_order_acquire) != now)
+    {
+        const std::string v = settings::Get("AC6_COLOUR_TINT");
+        on.store(v != "0" && v != "false", std::memory_order_relaxed);
+        generation.store(now, std::memory_order_release);
+    }
+    return on.load(std::memory_order_relaxed);
+}
+
 // Optional lens effects (settings graphics.film_grain / vignette / chromatic_aberration,
 // AC6_FILM_GRAIN / AC6_VIGNETTE / AC6_CHROMATIC_ABERRATION, each 0 to 1, 0 by default). Live.
 struct LensFx
@@ -8544,7 +8559,12 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
         const uint32_t first = constantRanges ? std::min(shader.constantFirst, end) : 0;
         const bool band = registers == 256 && shader.idHash == 0x6B6FBBD8930EFA4Dull && ExposureBand() > 0.0f && HdrSceneOn() &&
             first <= 106 && 106 < end;
-        const bool scaled = band;
+        // The game's final grade (6C6D041CAB12E202: per channel (x - c102) x c103, to the power c104, x c106 + c105,
+        // times the vignette, c101) without its tint (Mission colour tint off): each per-channel register its three
+        // channels' mean, the grade's brightness and contrast kept. (The hash's top bits carry translation options.)
+        const bool grade = registers == 224 && (shader.hash & 0x0FFFFFFFFFFFFFFFull) == 0x0C6D041CAB12E202ull && first <= 102 && 106 < end &&
+            !ColourTint();
+        const bool scaled = band || grade;
         if (!scaled && noted && !dirty && last.frame == s_r.frame && last.first <= first && end <= last.end)
             return true;
         auto a = s_r.upload.Allocate(registers * 16, 256);
@@ -8566,6 +8586,13 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
                     log::Info("Exposure band: lo {} hi {} (AC6_HDR_EXPOSURE_BAND {})", lo, hi, ExposureBand());
                 lo += (hi - lo) * ExposureBand();
             }
+            if (grade)
+                for (uint32_t r = 102; r <= 106; r++)
+                {
+                    float* c = f + r * 4;
+                    const float mean = (c[0] + c[1] + c[2]) / 3.0f;
+                    c[0] = c[1] = c[2] = mean;
+                }
             last.frame = UINT64_MAX;   // (not reused by the next draw)
         }
         dirty = 0;

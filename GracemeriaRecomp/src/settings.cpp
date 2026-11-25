@@ -178,6 +178,9 @@ const Setting kSettings[] = {
     { "graphics", "chromatic_aberration", "AC6_CHROMATIC_ABERRATION", kNumber, "0.5",
       "Colour fringes toward the corners of the scene\n"
       "Default: 0" },
+    { "graphics", "colour_tint", "AC6_COLOUR_TINT", kBool, "true",
+      "Applies tint from the colour grading assigned on each mission\n"
+      "Default: On" },
     { "graphics", "centroid", "AC6_CENTROID", kBool, "true", "Removes the black dots along aircraft edges\n"
                                                              "Off looks as on the console\n"
                                                              "Default: On" },
@@ -521,6 +524,7 @@ const Ui kUi[] = {
     { "film_grain", "Graphics", "Film grain", "", 0, 1, 0.05, "0", "EFFECTS" },
     { "vignette", "Graphics", "Vignette", "", 0, 1, 0.05, "0", "EFFECTS" },
     { "chromatic_aberration", "Graphics", "Chromatic aberration", "", 0, 1, 0.05, "0", "EFFECTS" },
+    { "colour_tint", "Graphics", "Mission colour tint", "", 0, 0, 0, "1", "EFFECTS" },
     // Off / Low / High, off by default: not the console's picture. The Enhanced preset sets High ("1", as the earlier
     // On, so files from before keep it).
     { "ambient_occlusion", "Graphics", "Ambient occlusion", "0=Off|low=Low|1=High", 0, 0, 0, "0", "EFFECTS" },

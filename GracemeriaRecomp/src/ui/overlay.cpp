@@ -751,7 +751,7 @@ constexpr const char* kLiveKeys[] = { "fullscreen", "refresh", "vsync", "frame_r
     // The Graphics tab's that take effect while running. Anti-aliasing between Off, SMAA
     // and TAA only (NeedsRestart).
     "deband", "anisotropic_override", "lod_scale", "centroid", "dof_fix", "wide_blurs", "aa", "ambient_occlusion", "shadow_detail", "film_grain", "vignette",
-    "chromatic_aberration", "motion_blur", "bloom", "captures",
+    "chromatic_aberration", "colour_tint", "motion_blur", "bloom", "captures",
     // The mouse, then the controller's settings.
     "mouse_controls", "steer_model", "sensitivity_x", "sensitivity_y", "invert_x", "invert_y",
     "touchpad_back", "adaptive_triggers", "custom_flight", "analog_yaw",
