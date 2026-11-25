@@ -138,10 +138,11 @@ const SDL_DisplayMode* Video::ChooseDisplayMode()
     renderScaleX = renderScaleY = renderScale;
     // AC6_WIDESCREEN (the aspect ratio: auto, the default, 0 = 16:9): an output of
     // another shape than 16:9 is filled instead of pillarboxed or letterboxed: wider ones hor+, narrower ones (16:10, 3:2,
-    // 4:3) vert+ (game/widescreen.cpp).
+    // 4:3) vert+ (game/widescreen.cpp). Also an output within a pixel of 16:9 (1366x768, a third of a pixel wider): a
+    // 16:9 frame in it would be 1365 wide, centred on a half pixel, the whole picture resampled.
     static const bool widescreen = [] { const char* v = std::getenv("AC6_WIDESCREEN"); return !v || *v != '0'; }();
     const int64_t shape = int64_t(fitWidth) * kGuestHeight - int64_t(fitHeight) * kGuestWidth;
-    if (widescreen && (shape > int64_t(kGuestHeight) || shape < -int64_t(kGuestWidth)))
+    if (widescreen && shape != 0)
     {
         renderWidth = fitWidth;
         renderHeight = fitHeight;

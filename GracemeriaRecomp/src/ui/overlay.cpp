@@ -1664,7 +1664,7 @@ bool ComputeRenderSize(RenderSize& out)
     constexpr double kW = 1280.0, kH = 720.0;
     double sx = std::min(ow / kW, oh / kH), sy = sx, fw = std::round(kW * sx), fh = std::round(kH * sy);
     const int64_t shape = int64_t(ow) * 720 - int64_t(oh) * 1280;
-    if ((!widescreen || InEffect(*widescreen) != "0") && (shape > 720 || shape < -1280))
+    if ((!widescreen || InEffect(*widescreen) != "0") && shape != 0)
         fw = ow, fh = oh, sx = ow / kW, sy = oh / kH;
     const double floor = 0.5 / std::min(sx, sy);
     double f = 1.0;

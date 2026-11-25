@@ -13186,10 +13186,12 @@ void TargetToWindow(RenderCommandList& cl)
     const float ww = float(g_video.BackBufferWidth()), wh = float(g_video.BackBufferHeight());
     const float scale = std::min(ww / float(s_r.targetWidth), wh / float(s_r.targetHeight));
     const float w = float(s_r.targetWidth) * scale, h = float(s_r.targetHeight) * scale;
-    // Bars only where the picture doesn't reach.
+    // Bars only where the picture doesn't reach. The picture starts on a whole pixel: centred on a half one (an odd
+    // difference, e.g. a 1365-wide 16:9 frame in a 1366-wide window) every pixel would be resampled between two.
     if (w < ww || h < wh)
         cl.clearColor(0, RenderColor(0.0f, 0.0f, 0.0f, 1.0f));
-    SetViewport(cl, RenderViewport((ww - w) / 2, (wh - h) / 2, w, h));
+    const float x0 = std::floor((ww - w) / 2), y0 = std::floor((wh - h) / 2);
+    SetViewport(cl, RenderViewport(x0, y0, w, h));
     SetScissor(cl, RenderRect(0, 0, int32_t(ww), int32_t(wh)));
     if (s_r.outputPipeline)
     {
@@ -13240,7 +13242,7 @@ void TargetToWindow(RenderCommandList& cl)
             // The window's framebuffer bound again for its draw.
             cl.barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(g_video.BackBuffer(), RenderTextureLayout::COLOR_WRITE));
             cl.setFramebuffer(g_video.BackBufferFramebuffer());
-            SetViewport(cl, RenderViewport((ww - w) / 2, (wh - h) / 2, w, h));
+            SetViewport(cl, RenderViewport(x0, y0, w, h));
             SetScissor(cl, RenderRect(0, 0, int32_t(ww), int32_t(wh)));
             SetPipeline(cl, s_r.outputPipeline.get());
             BindCommon(cl);
