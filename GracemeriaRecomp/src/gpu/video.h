@@ -177,6 +177,8 @@ struct Video
     Output OutputMode() const { return outputMode; }
     plume::RenderFormat BackBufferFormat() const { return backBufferFormat; }
 
+    // The display mode applied: "0" a window, "borderless", "1" exclusive (the window's thread: Alt+Enter, ui/overlay.cpp).
+    const std::string& DisplayModeNow() const { return fullscreenNow; }
 private:
     struct PresentJob
     {

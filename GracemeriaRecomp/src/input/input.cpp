@@ -372,8 +372,10 @@ void ReadKeyboard(PadState& s)
         { SDL_SCANCODE_Q, kLeftShoulder }, { SDL_SCANCODE_E, kRightShoulder },
         { SDL_SCANCODE_C, kLeftThumb }, { SDL_SCANCODE_V, kRightThumb },
     };
+    // (Not Enter with Alt held: Alt+Enter switches the display mode, ui/overlay.cpp.)
+    const bool alt = keys[SDL_SCANCODE_LALT] || keys[SDL_SCANCODE_RALT];
     for (auto& m : kMap)
-        if (keys[m.key])
+        if (keys[m.key] && !(alt && m.key == SDL_SCANCODE_RETURN))
             s.buttons |= m.xbox;
     if (keys[SDL_SCANCODE_Z]) s.leftTrigger = 255;
     if (keys[SDL_SCANCODE_X]) s.rightTrigger = 255;

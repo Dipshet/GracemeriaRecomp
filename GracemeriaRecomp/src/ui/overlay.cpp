@@ -39,6 +39,7 @@
 #include <initializer_list>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 #include <string>
@@ -811,6 +812,56 @@ void PushLive()
         settings::SetLive(e.entry.env, text);
         log::Info("Settings overlay: {} = {} (live)", e.entry.key, text.empty() ? "(default)" : text);
     }
+}
+
+Edit* Find(std::string_view key);
+
+// Alt+Enter: a window <-> fullscreen, as the Display mode setting (saved, as from the menu): from a window to the
+// fullscreen mode last used (borderless or exclusive; the file's, else borderless), from fullscreen to a window. Set in
+// the environment (AC6_FULLSCREEN): switched for this run only.
+void ToggleFullscreen()
+{
+    static std::string lastFullscreen;   // "borderless" / "exclusive"
+    const std::string now = gpu::g_video.DisplayModeNow();   // (the mode the window has)
+    const bool windowed = now == "0" || now == "off" || now == "false";
+    std::optional<settings::Entry> entry;
+    for (const settings::Entry& e : settings::Entries())
+        if (std::string_view(e.key) == "fullscreen")
+            entry = e;
+    if (!entry)
+        return;
+    std::string next;
+    if (windowed)
+    {
+        next = lastFullscreen;
+        if (next.empty())
+        {
+            const std::string file = settings::FileValue(*entry);
+            next = file == "exclusive" || file == "1" ? "exclusive" : "borderless";
+        }
+    }
+    else
+    {
+        lastFullscreen = now == "1" || now == "exclusive" ? "exclusive" : "borderless";
+        next = "off";
+    }
+    const std::string text = settings::VariableText(*entry, next);
+    if (!settings::FromEnvironment(*entry))
+    {
+        std::string error;
+        if (!settings::Save({ { *entry, next } }, error))
+            log::Warn("Alt+Enter: the display mode not saved: {}", error);
+        // The menu's row follows (its file value too: nothing left to apply).
+        if (Edit* f = Find("fullscreen"))
+            f->value = f->file = next;
+        auto it = std::find_if(s_pushed.begin(), s_pushed.end(), [](const auto& p) { return p.first == "fullscreen"; });
+        if (it != s_pushed.end())
+            it->second = text;
+        else
+            s_pushed.push_back({ "fullscreen", text });
+    }
+    settings::SetLive(entry->env, text);
+    log::Info("Alt+Enter: display mode {}", next == "off" ? "window" : next);
 }
 
 bool IsHudColour(const Edit& e)
@@ -4283,6 +4334,14 @@ bool HandleEvent(const SDL_Event& event)
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.scancode == SDL_SCANCODE_F4 && !event.key.repeat)
     {
         SetOpen(!s_open.load());
+        return true;
+    }
+    // Alt+Enter (either Enter, either Alt): a window <-> fullscreen. Taken from the game (its Enter is Start).
+    if (event.type == SDL_EVENT_KEY_DOWN && (event.key.scancode == SDL_SCANCODE_RETURN || event.key.scancode == SDL_SCANCODE_KP_ENTER) &&
+        (event.key.mod & SDL_KMOD_ALT) && !(event.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_SHIFT)))
+    {
+        if (!event.key.repeat)
+            ToggleFullscreen();
         return true;
     }
     // F5: the texture replacements read again from their files. Open or closed: a note over the game, 
