@@ -100,6 +100,7 @@ constexpr uint32_t kDevVteControl = 0x294C;     // PA_CL_VTE_CNTL (0x2206)
 constexpr uint32_t kDevClipControl = 0x2944;    // PA_CL_CLIP_CNTL (0x2204): bit 16 CLIP_DISABLE, bit 19 DX_CLIP_SPACE_DEF
 constexpr uint32_t kDevScModeControl = 0x2948;  // PA_SU_SC_MODE_CNTL (0x2205)
 constexpr uint32_t kDevContextMisc = 0x2924;    // SQ_CONTEXT_MISC (0x2181): bits 2-3 sc_sample_cntl
+constexpr uint32_t kDevVtxControl = 0x29C0;    // PA_SU_VTX_CNTL: bit 0 pix_center (0 Direct3D: centres at .0, 1 OpenGL: .5)
 constexpr uint32_t kDevPointSize = 0x2964;      // PA_SU_POINT_SIZE (0x2280): height 0-15, width 16-31 (12.4 radius)
 constexpr uint32_t kDevPointMinMax = 0x2968;    // PA_SU_POINT_MINMAX (0x2281): min 0-15, max 16-31 (12.4 radius)
 constexpr uint32_t kDevInterpolatorControl = 0x2928;   // SQ_INTERPOLATOR_CNTL (0x2182): bits 16-31 sampling pattern (1 = centre)
@@ -181,6 +182,13 @@ struct SharedConstants
     // strength (sea[9]).
     uint32_t seaImage;
     float sea[10];
+    // The 2D snaps' host grid above the guest's size: a guest pixel boundary k is at host k x (px, py) + (ox, oy).
+    float hostGridX, hostGridY, hostGridOX, hostGridOY;
+    // The viewport the 2D is drawn with (whole host pixels), NDC to host pixels: host = ndc x (X, Y) + (OX, OY), y up.
+    float hostViewX, hostViewY, hostViewOX, hostViewOY;
+    // The 2D line draws' segments (primitive IDs 0-63) of strips drawn counterclockwise: their box's inside on their left.
+    uint32_t lineFlip[2];
+    uint32_t pad1072[2];
 };
 static_assert(offsetof(SharedConstants, vertexIndexBase) == 532 && offsetof(SharedConstants, depthBias) == 536 &&
     offsetof(SharedConstants, streamAddress) == 544 &&
@@ -192,12 +200,12 @@ static_assert(offsetof(SharedConstants, vertexIndexBase) == 532 && offsetof(Shar
     offsetof(SharedConstants, fallbackAddress) == 848 && offsetof(SharedConstants, motion) == 856 &&
     offsetof(SharedConstants, altScaledTextures) == 920 && offsetof(SharedConstants, altScaleX) == 924 &&
     offsetof(SharedConstants, relight) == 932 && offsetof(SharedConstants, tileTaps) == 972 && offsetof(SharedConstants, cloudRim) == 976 &&
-    offsetof(SharedConstants, seaImage) == 980 && offsetof(SharedConstants, sea) == 984 && sizeof(SharedConstants) <= 1024);
+    offsetof(SharedConstants, seaImage) == 980 && offsetof(SharedConstants, sea) == 984 && offsetof(SharedConstants, hostGridX) == 1024 && offsetof(SharedConstants, hostViewX) == 1040 && offsetof(SharedConstants, lineFlip) == 1056 && sizeof(SharedConstants) <= 1072);
 
 constexpr uint32_t kNullTexture2D = 0, kNullTexture3D = 1, kNullTextureCube = 2;
 // The uniform buffers' ranges: 256 VS and 224 PS float registers, the shared block. Each draw's
 // allocations are at least this big, so a range never reaches past the upload ring.
-constexpr uint32_t kConstantBlockBytes[3] = { 256 * 16, 224 * 16, 1024 };
+constexpr uint32_t kConstantBlockBytes[3] = { 256 * 16, 224 * 16, 1072 };
 constexpr uint32_t kTextureDescriptors = 65536, kSamplerDescriptors = 1024;
 constexpr uint32_t kTargetWidth = kGuestWidth, kTargetHeight = kGuestHeight;
 constexpr RenderFormat kTargetFormat = RenderFormat::B8G8R8A8_UNORM;
@@ -484,6 +492,7 @@ struct Renderer
     };
     FastMap<uint64_t, LateMesh> lateMeshes;
     std::unique_ptr<RenderShader> lateBoundsGs;
+    std::unique_ptr<RenderShader> line2dGs;   // the 2D's lines above the guest's size as rectangles (internal_shaders.hlsl LINE_2D)
     std::unique_ptr<RenderBuffer> lateCapture;           // this frame's captured clip positions
     std::unique_ptr<RenderBuffer> lateReadback[4];       // copied at the pass's end, read four frames later
     uint32_t lateCaptureUsed = 0;
@@ -1980,6 +1989,7 @@ float VolSetting(const char* name, float fallback)
 
 constexpr uint32_t kSpecVolHarvest = 1u << 30;   // a pipeline key bit: the draw's pipeline gets the harvesting stage
 constexpr uint32_t kSpecLateBounds = 1u << 29;   // and the late mesh capture stage
+constexpr uint32_t kSpecLine2D = 1u << 28;       // and the 2D lines' rectangles
 constexpr uint32_t kVolCapacity = 16384;         // particle records per frame
 constexpr uint32_t kVolRecord = 80;              // bytes a record (volumetrics.hlsl)
 
@@ -4949,7 +4959,7 @@ struct PipelineState
 {
     uint32_t topology = 0;                  // RenderPrimitiveTopology
     uint32_t spec = 0;                      // the shaders' specialization constant: 0 where both read the draw flags
-    uint32_t geometry = 0;                  // 0: none, 1: the smoke harvest's stage, 2: the late meshes' bounds
+    uint32_t geometry = 0;                  // 0: none, 1: the smoke harvest's stage, 2: the late meshes' bounds, 3: 2D line rectangles
     uint32_t colorFormat = 0;               // RenderFormat, UNKNOWN: no colour target
     uint32_t motion = 0;                    // TAA's motion image: 0 not bound, 1 bound but not written, 2 written
     uint32_t blend[8] = {};                 // enabled, source, destination, operation, the alpha's three, the write mask
@@ -4969,8 +4979,8 @@ bool ReadPipelineState(uint32_t device, const HostShader& vs, const HostShader& 
 {
     st = PipelineState{};
     st.topology = uint32_t(topology);
-    st.geometry = (specConstants & kSpecVolHarvest) ? 1 : (specConstants & kSpecLateBounds) ? 2 : 0;
-    specConstants &= ~(kSpecVolHarvest | kSpecLateBounds);
+    st.geometry = (specConstants & kSpecVolHarvest) ? 1 : (specConstants & kSpecLateBounds) ? 2 : (specConstants & kSpecLine2D) ? 3 : 0;
+    specConstants &= ~(kSpecVolHarvest | kSpecLateBounds | kSpecLine2D);
     RenderBlendDesc blend = RenderBlendDesc::Copy();
     const uint32_t control = t_blendOverride ? t_blendOverride : U32(device + kDevBlendControl);
     if (control != kBlendDisabled)
@@ -5133,6 +5143,8 @@ std::unique_ptr<RenderPipeline> BuildPipeline(const PipelineState& st, const Hos
         desc.geometryShader = s_r.volHarvestGs.get();
     else if (st.geometry == 2)
         desc.geometryShader = s_r.lateBoundsGs.get();
+    else if (st.geometry == 3)
+        desc.geometryShader = s_r.line2dGs.get();
     desc.primitiveTopology = RenderPrimitiveTopology(st.topology);
     desc.cullMode = RenderCullMode(st.cull);
     // Bit 2 set = clockwise front faces, in Vulkan's framebuffer orientation as the vertex shaders
@@ -5168,6 +5180,8 @@ std::unique_ptr<RenderPipeline> BuildPipeline(const PipelineState& st, const Hos
         desc.renderTargetCount = 2;
     }
     desc.dynamicBlendConstantsEnabled = st.blendConstant != 0;
+    desc.dynamicLineWidthEnabled = desc.primitiveTopology == RenderPrimitiveTopology::LINE_LIST ||
+        desc.primitiveTopology == RenderPrimitiveTopology::LINE_STRIP;   // (LineWidth, set per draw)
     desc.depthClipEnabled = st.depthClip != 0;
     desc.multisampling.sampleCount = st.samples;
     desc.alphaToCoverageEnabled = st.alphaToCoverage != 0;
@@ -5783,6 +5797,46 @@ void RunMotionBlur(RenderCommandList& cl, HostImage& image, HostImage& motion);
 
 // --- Public API -----------------------------------------------------------------------------------------
 
+std::atomic<bool> s_shotRequest{ false };   // RequestScreenshot
+
+void RequestScreenshot()
+{
+    s_shotRequest.store(true);
+}
+
+// NoteLayerClip's rects: {guest x, y, w, h, canvas x, y, w, h}, the latest few (the radar's, a frame or two of them).
+std::mutex& s_layerClipMutex = *new std::mutex;
+std::vector<std::array<int32_t, 8>>& s_layerClips = *new std::vector<std::array<int32_t, 8>>;
+
+void NoteLayerClip(int32_t gx, int32_t gy, int32_t gw, int32_t gh, int32_t cx, int32_t cy, int32_t cw, int32_t ch)
+{
+    std::lock_guard lock(s_layerClipMutex);
+    for (auto& c : s_layerClips)
+        if (c[0] == gx && c[1] == gy && c[2] == gw && c[3] == gh)
+        {
+            c = { gx, gy, gw, gh, cx, cy, cw, ch };
+            return;
+        }
+    if (s_layerClips.size() >= 16)
+        s_layerClips.erase(s_layerClips.begin());
+    s_layerClips.push_back({ gx, gy, gw, gh, cx, cy, cw, ch });
+}
+
+// The canvas rect noted for a guest viewport, if any.
+bool LayerClip(const RenderViewport& v, std::array<int32_t, 4>& canvas)
+{
+    const int32_t x = int32_t(std::lround(v.x)), y = int32_t(std::lround(v.y)), w = int32_t(std::lround(v.width)),
+        h = int32_t(std::lround(v.height));
+    std::lock_guard lock(s_layerClipMutex);
+    for (const auto& c : s_layerClips)
+        if (c[0] == x && c[1] == y && c[2] == w && c[3] == h)
+        {
+            canvas = { c[4], c[5], c[6], c[7] };
+            return true;
+        }
+    return false;
+}
+
 void RequestRingDump()
 {
     if (RingSeconds() > 0.0)
@@ -6153,6 +6207,11 @@ bool InitRenderer()
         }
     }
 
+    // The 2D's lines above the guest's size as rectangles (AC6_LINE_RECTS=0: wide lines).
+    // (It reads the host grid from the shared block's uniform buffer.)
+    if (device.getCapabilities().geometryShader && !HlslBackend() && UniformConstants() &&
+        [] { const char* v = std::getenv("AC6_LINE_RECTS"); return !(v && *v == '0'); }())
+        s_r.line2dGs = InternalShader("line2dGs");
     // The late pass's rectangle: the mesh capture stage and its buffers.
     if (LateRectWanted() && device.getCapabilities().geometryShader && UniformConstants())
     {
@@ -6312,7 +6371,8 @@ bool InitRenderer()
         if (const size_t colon = text.find(':'); colon != std::string::npos)
             s_r.resolveStatsFrames = std::stoull(text.substr(colon + 1));
     }
-    if (!s_r.screenshotFrames.empty() || s_r.dumpFrame != UINT64_MAX)
+    // (Also with the control channel, whose "shot" asks for one at any frame: RequestScreenshot.)
+    if (!s_r.screenshotFrames.empty() || s_r.dumpFrame != UINT64_MAX || std::getenv("AC6_CONTROL"))
     {
         s_r.readback = device.createBuffer(RenderBufferDesc::ReadbackBuffer(uint64_t(s_r.targetWidth) * s_r.targetHeight * 4));
         s_r.rawReadback = device.createBuffer(RenderBufferDesc::ReadbackBuffer(uint64_t(s_r.targetWidth) * s_r.targetHeight * 8 * 2));
@@ -7964,6 +8024,18 @@ void RunVolumetrics(RenderCommandList& cl, const Targets& targets)
     }
 }
 
+// A line's width in host pixels: the game's (PA_SU_LINE_CNTL bits 0-15, the half width in 12.4 fixed point: 1 pixel for
+// the HUD's) times the target's host pixels per guest pixel. Vulkan's lines stay 1 pixel otherwise, so at a higher
+// resolution the radar's and the PiP's outlines and the gun's range arc were thin lines that no longer covered the
+// edges they cover at 720p. Whole pixels, up to the device's widest (1 without wide lines).
+float LineWidth(uint32_t device, uint32_t targetScale)
+{
+    const uint32_t half = U32(device + kDevPointSize + 8) & 0xFFFF;
+    const float guest = half ? float(half) / 8.0f : 1.0f;
+    const float host = std::round(guest * float(targetScale) * std::min(s_r.resX, s_r.resY));
+    return std::clamp(host, 1.0f, g_video.device->getCapabilities().maxLineWidth);
+}
+
 // The UI at the frame's size. UiScaled: whether the 3D is rendered at another size than the frame's (AC6_RENDER_SCALE).
 // BeginUiImage, on the frame's first 2D layer draw into its target, scales that target into the UI image, and the
 // UI's draws then go there. False if it can't (another format than the output's).
@@ -9192,8 +9264,16 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
         sc.drawFlags = specConstants | SPEC_CONSTANT_EMITTER_DECODE;
         std::memcpy(shared.memory + offsetof(SharedConstants, drawFlags), &sc.drawFlags, sizeof(sc.drawFlags));
     }
+    // The 2D's lines (the 2D layers' and those without the depth test, 1 guest pixel wide, single-sample targets) as
+    // Bresenham parallelograms on the guest's grid (line2dGs), at every size: a strip's corners always drawn (at 720p
+    // the diamond rule left one to neither segment when the HUD swayed between pixels), whole guest pixels above it.
+    // The grid comes from the vertex shader (the line snap above the guest's size, LINE_GRID at it).
+    const bool lineTopology = topology == RenderPrimitiveTopology::LINE_LIST || topology == RenderPrimitiveTopology::LINE_STRIP;
+    const uint32_t lineHalfWidth = U32(device + kDevPointSize + 8) & 0xFFFF;
+    const bool lineRects = s_r.line2dGs && lineTopology && (t_uiDraw || !(U32(device + kDevDepthControl) & 2)) && targets.samples == 1 &&
+        (lineHalfWidth == 0 || lineHalfWidth == 8) && volLayout < 0 && !lateCaptureEnd;
     const PendingPipeline* pipeline = GetPipeline(device, *vs, *ps, layout, topology,
-        specConstants | (volLayout >= 0 ? kSpecVolHarvest : 0) | (lateCaptureEnd ? kSpecLateBounds : 0), targets);
+        specConstants | (volLayout >= 0 ? kSpecVolHarvest : 0) | (lateCaptureEnd ? kSpecLateBounds : 0) | (lineRects ? kSpecLine2D : 0), targets);
     if (pipeline && targets.depth && (U32(device + kDevDepthControl) & 6) == 6)
         NoteDepthWrite(targets.depth);
     if (pipeline && targets.color && (U32(device + kDevColorMask) & 0xF))
@@ -9208,11 +9288,99 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
     // alone it only moves the dashes along the horizon (which centroid interpolation fixes). Off by default: no pass
     // is known to need it.
     static const bool halfPixelOffset = [] { const char* v = std::getenv("AC6_HALF_PIXEL_OFFSET"); return v && std::strcmp(v, "1") == 0; }();
-    if (halfPixelOffset && targets.samples > 1 && viewport.width > 0.0f && viewport.height > 0.0f)
+    // The 2D (the 2D layers' draws: HUD, menus, text; and lines without the depth test) gets it where the draw asks
+    // for Direct3D's pixel centres (PA_SU_VTX_CNTL's pix_center 0), as on the console and in Xenia (its
+    // half_pixel_offset, on by default: +0.5 across and down for those draws). AC6 sets them for the HUD's lines (4) and
+    // OpenGL's for its sprites, text and fills (5): the lines are placed for the offset (without it every frame line sat
+    // a pixel up and left of its fill's edge, the radar's, the PiP's and the orders bar's: a gap on the top and left, an
+    // overlap on the bottom and right; a recording of the original and rexglue show neither), the sprites without it
+    // (with it their texels were sampled half a texel off: blurred text and icons). AC6_HALF_PIXEL_2D=0: never (the
+    // 3D never has it).
+    static const bool halfPixel2D = [] { const char* v = std::getenv("AC6_HALF_PIXEL_2D"); return !(v && *v == '0'); }();
+    const bool line2D = (topology == RenderPrimitiveTopology::LINE_LIST || topology == RenderPrimitiveTopology::LINE_STRIP) &&
+        (t_uiDraw || !(U32(device + kDevDepthControl) & 2));
+    const bool offset2D = halfPixel2D && (t_uiDraw || line2D) && !(U32(device + kDevVtxControl) & 1);
+    if (((halfPixelOffset && targets.samples > 1) || offset2D) && viewport.width > 0.0f && viewport.height > 0.0f)
     {
         const float offset[2] = { 1.0f / viewport.width, -1.0f / viewport.height };
         std::memcpy(shared.memory + offsetof(SharedConstants, halfPixelOffsetX), offset, sizeof(offset));
         std::memcpy(&sc.halfPixelOffsetX, offset, sizeof(offset));
+    }
+    // 2D above the guest's size, after the half-pixel offset (above), on the game's pixel grid. Lines: a 1-pixel line
+    // covers the pixel its vertices are in, or, on the edge between two pixels, the one left of and above it; a wider
+    // line (LineWidth) is centred on its vertices, so on an edge it would straddle it. The vertex shader moves each
+    // vertex on the half-pixel grid onto the centre of that pixel (SPEC_CONSTANT_LINE_SNAP; the grid below); others
+    // (circles, moving lines) stay. Not the scene's lines (the contrails): they would move in whole guest pixels. The 2D
+    // layers' untextured triangles: an edge exactly through pixel centres covers those pixels at the guest's size (the
+    // left / top tie rule) but would cut them in half above it; a vertex on a pixel centre moves onto the pixel's edge
+    // (SPEC_CONSTANT_EDGE_SNAP), others stay. Not textured ones: their texture would move with the vertex. At the
+    // guest's size nothing changes.
+    const bool lineDraw = topology == RenderPrimitiveTopology::LINE_LIST || topology == RenderPrimitiveTopology::LINE_STRIP;
+    // (Lines: the 2D layers' and any without the depth test, not the scene's depth-tested contrails, also on a
+    // single-sample scene surface.)
+    const bool snap2D = (lineDraw && (t_uiDraw || !(U32(device + kDevDepthControl) & 2))) ||
+        (!lineDraw && t_uiDraw && !pointSprites && ps && ps->ok && ps->textureSlots == 0);
+    const bool snapScaled = snap2D && targets.samples == 1 && float(targets.scale) * std::min(s_r.resX, s_r.resY) > 1.001f &&
+        viewport.width > 0.0f && viewport.height > 0.0f;
+    // The rest of the 2D layers' draws above the guest's size (sprites, text) mapped the same way, not snapped
+    // (LINE_GRID): a layer's contents all at the frame's scale. (The line parallelograms need the grid at the guest's
+    // size too: written, the vertices left as they are.)
+    const bool remap2D = !snapScaled && t_uiDraw && !pointSprites && !lineDraw && targets.samples == 1 &&
+        float(targets.scale) * std::min(s_r.resX, s_r.resY) > 1.001f && viewport.width > 0.0f && viewport.height > 0.0f;
+    const bool snapGrid = snapScaled || remap2D || (lineRects && viewport.width > 0.0f && viewport.height > 0.0f);
+    // The line parallelograms put a frame's side on the inside of its box, the right of the line's way, the boxes' way
+    // round (the radar's, the PiP's, the score and time boxes'). A strip the other way round (the orders bar's outline, an
+    // open U) has its segments marked for the geometry shader by their primitive IDs (the first 64 a draw makes): the
+    // inside on their left. (Reversed, an open strip would lose its first pixel: Bresenham's last pixel is left out.)
+    if (lineRects)
+    {
+        uint32_t flip[2] = { 0, 0 };
+        if (snapScaled && topology == RenderPrimitiveTopology::LINE_STRIP && !layout.slots.empty() && !layout.elements.empty())
+        {
+            const uint32_t fetch0 = device + kDevVertexFetch + (17 - layout.slots[0].index) * 8;
+            const uint32_t stride = layout.strides[layout.slots[0].index];
+            const uint32_t base = PhysicalToGuest(xenos::VertexFetch{ { U32(fetch0), U32(fetch0 + 4) } }.Address()) +
+                layout.elements[0].alignedByteOffset;
+            auto at = [&](size_t i) {
+                const uint32_t index = indices.empty() ? firstVertex + uint32_t(i) : indices[i];
+                return std::pair<double, double>{ std::bit_cast<float>(U32(base + index * stride)), std::bit_cast<float>(U32(base + index * stride + 4)) };
+            };
+            const size_t count = indices.empty() ? vertexCount : indices.size();
+            uint32_t segment = 0;
+            for (size_t first = 0; first < count && segment < 64;)
+            {
+                size_t last = first;
+                while (last < count && (indices.empty() || indices[last] != 0xFFFFFFFFu))
+                    last++;
+                if (last - first >= 2)
+                {
+                    double area = 0.0;   // twice the signed area, y down: positive clockwise
+                    for (size_t i = first; i < last; i++)
+                    {
+                        const auto [x0, y0] = at(i);
+                        const auto [x1, y1] = at(i + 1 < last ? i + 1 : first);
+                        area += x0 * y1 - x1 * y0;
+                    }
+                    for (size_t i = first; i + 1 < last; i++, segment++)
+                        if (area < 0.0 && segment < 64)
+                            flip[segment / 32] |= 1u << (segment % 32);
+                }
+                first = last + 1;
+            }
+        }
+        std::memcpy(shared.memory + offsetof(SharedConstants, lineFlip), flip, sizeof(flip));
+        std::memcpy(sc.lineFlip, flip, sizeof(flip));
+    }
+    if (snapGrid)
+    {
+        // (Textured 2D snapped too where a guest pixel isn't a whole number of host pixels: a sprite's edge on a host
+        // pixel's centre missed the row the fill or the line beside it starts at, the ALL highlight a row short of the
+        // orders bar's outline at 1080p. At whole scales its edges are on host pixel edges already: it stays.)
+        const float frameScale = float(targets.scale) * std::min(s_r.resX, s_r.resY);
+        const bool wholeScale = std::fabs(frameScale - std::round(frameScale)) < 1e-3f;
+        sc.drawFlags |= (remap2D && !wholeScale) ? SPEC_CONSTANT_EDGE_SNAP : !snapScaled ? SPEC_CONSTANT_LINE_GRID :
+            lineDraw ? SPEC_CONSTANT_LINE_SNAP : SPEC_CONSTANT_EDGE_SNAP;
+        std::memcpy(shared.memory + offsetof(SharedConstants, drawFlags), &sc.drawFlags, sizeof(sc.drawFlags));
     }
     // Centroid interpolation: on multisampled targets the console interpolates at the
     // centroid of the covered samples unless SQ_CONTEXT_MISC's sample control asks for centres (all, or the
@@ -9251,6 +9419,8 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
         std::memcpy(shared.memory + offsetof(SharedConstants, pointNdcPerPixelX), scale, sizeof(scale));
         std::memcpy(&sc.pointNdcPerPixelX, scale, sizeof(scale));
     }
+    RenderViewport exactViewport;   // (the guest viewport's exact place in host pixels, below)
+    bool exactRounded = false;
     // Guest pixels to the target's host pixels: its 4x MSAA promotion and the internal resolution. The edges
     // go through ToHost as the image sizes do: at a fractional scale a 1x1 target is 2x2 host pixels, and a
     // viewport of 1.5 would cover one of them (the exposure's 1x1 average then reads three unwritten texels: white).
@@ -9266,14 +9436,62 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
         }
         else
         {
-            const double k = double(targets.scale);
-            const float x0 = float(ToHostX(viewport.x * k)), y0 = float(ToHostY(viewport.y * k));
-            const float x1 = float(ToHostX((double(viewport.x) + viewport.width) * k)), y1 = float(ToHostY((double(viewport.y) + viewport.height) * k));
-            viewport.x = x0;
-            viewport.y = y0;
-            viewport.width = x1 - x0;
-            viewport.height = y1 - y0;
+            // A 2D layer's clip rect on a wide or narrow output (NoteLayerClip): its canvas pixels on the screen, the
+            // canvas in the middle at 16:9, its pixel the shorter axis's host pixels. Through the rounded guest
+            // viewport its edges fell up to half a guest pixel off the canvas's pixels (the radar's clip, and its
+            // contents scaled to fit).
+            std::array<int32_t, 4> canvas;
+            if (std::fabs(s_r.resX - s_r.resY) > 1e-4f && targets.width == s_r.targetWidth && targets.height == s_r.targetHeight &&
+                LayerClip(viewport, canvas))
+            {
+                const float p = float(targets.scale) * std::min(s_r.resX, s_r.resY);
+                viewport.x = 0.5f * float(targets.width) + (float(canvas[0]) - 0.5f * float(kGuestWidth)) * p;
+                viewport.y = 0.5f * float(targets.height) + (float(canvas[1]) - 0.5f * float(kGuestHeight)) * p;
+                viewport.width = float(canvas[2]) * p;
+                viewport.height = float(canvas[3]) * p;
+            }
+            else
+            {
+                const double k = double(targets.scale);
+                const float x0 = float(ToHostX(viewport.x * k)), y0 = float(ToHostY(viewport.y * k));
+                const float x1 = float(ToHostX((double(viewport.x) + viewport.width) * k)), y1 = float(ToHostY((double(viewport.y) + viewport.height) * k));
+                // (Its exact place for the 2D's grid: a 2D layer's, the radar's 191 guest pixels at 94, 458, is 238.75
+                // host pixels at 117.5, 572.5 at 900p, drawn in 238 at 118, 573. The 2D's vertex shaders map their
+                // contents from the exact place onto the drawn one, below.)
+                exactViewport = RenderViewport(float(double(viewport.x) * k * s_r.resX), float(double(viewport.y) * k * s_r.resY),
+                    float(double(viewport.width) * k * s_r.resX), float(double(viewport.height) * k * s_r.resY));
+                viewport.x = x0;
+                viewport.y = y0;
+                viewport.width = x1 - x0;
+                viewport.height = y1 - y0;
+                exactRounded = true;
+            }
         }
+    }
+    if (!exactRounded)
+        exactViewport = viewport;
+    // The snaps' grid: the game's pixels in host pixels, as the shader finds a vertex's place on it, g = ndc x A + B
+    // (y down). On a wide or narrow output the frame's 2D is the 1280x720 canvas in the middle at 16:9 (the 2D layers'
+    // ortho), its pixel the shorter axis's host pixels across both ways, from the frame's centre: there the guest
+    // viewport's pixels are wider (or taller) than the HUD's, and a snap on them left the radar's gaps uneven (1 and 3
+    // host pixels left and right at 3440x1440). Other targets: their guest pixels.
+    if (snapGrid)
+    {
+        float px = float(targets.scale) * s_r.resX, py = float(targets.scale) * s_r.resY, ox = 0.0f, oy = 0.0f;
+        if (std::fabs(s_r.resX - s_r.resY) > 1e-4f && targets.width == s_r.targetWidth && targets.height == s_r.targetHeight)
+        {
+            px = py = float(targets.scale) * std::min(s_r.resX, s_r.resY);
+            ox = 0.5f * float(targets.width) - 0.5f * float(kGuestWidth) * px;
+            oy = 0.5f * float(targets.height) - 0.5f * float(kGuestHeight) * py;
+        }
+        const RenderViewport& e = exactViewport;
+        const float grid[4] = { 0.5f * e.width / px, -0.5f * e.height / py, (0.5f * e.width + e.x - ox) / px, (0.5f * e.height + e.y - oy) / py };
+        std::memcpy(shared.memory + offsetof(SharedConstants, pointDiameterMin), grid, sizeof(grid));
+        std::memcpy(&sc.pointDiameterMin, grid, sizeof(grid));
+        const float host[8] = { px, py, ox, oy, 0.5f * viewport.width, -0.5f * viewport.height, viewport.x + 0.5f * viewport.width,
+            viewport.y + 0.5f * viewport.height };
+        std::memcpy(shared.memory + offsetof(SharedConstants, hostGridX), host, sizeof(host));
+        std::memcpy(&sc.hostGridX, host, sizeof(host));
     }
     const RenderViewport steadyViewport = viewport;   // (the planar reflection's: without the jitter)
     // Temporal AA: the scene surface's draws move by this frame's sub-pixel jitter.
@@ -9393,6 +9611,9 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
     SetViewport(cl, viewport);
     SetScissor(cl, RenderRect(0, 0, int32_t(targets.width), int32_t(targets.height)));
     SetPipeline(cl, pipeline);
+    const bool lines = lineDraw;
+    if (lines)
+        cl.setLineWidth(LineWidth(device, targets.scale));
     if (UsesBlendConstant(U32(device + kDevBlendControl)))
     {
         float constants[4];
@@ -9745,6 +9966,8 @@ void Draw(uint32_t device, uint32_t primType, uint32_t firstVertex, uint32_t ver
                 layer.fresh = false;
             }
             SetPipeline(cl, glowPipeline);
+            if (lines)
+                cl.setLineWidth(LineWidth(device, glowTargets.scale));
             if (blendConstant >= 0.0f)
             {
                 const float constants[4] = { blendConstant, blendConstant, blendConstant, blendConstant };
@@ -13259,7 +13482,7 @@ void PresentImpl(uint32_t vblanks)
         // The source covers the output target: what a clear would leave shows nowhere.
         const bool covers = source && float(source->width) * sourceScaleX >= float(s_r.targetWidth) - 0.5f &&
             float(source->height) * sourceScaleY >= float(s_r.targetHeight) - 0.5f;
-        const bool screenshot = s_r.screenshotFrames.contains(s_r.frame) || dumping;
+        const bool screenshot = s_r.screenshotFrames.contains(s_r.frame) || dumping || (s_shotRequest.exchange(false) && s_r.readback);
         // A window the output target's size takes the frame straight: one full-frame pass instead
         // of four (clear the target, draw the frame into it, clear the window, copy the target across), the same
         // pixels, as that copy is 1:1. On an integrated GPU each such pass costs a share of its shared memory's

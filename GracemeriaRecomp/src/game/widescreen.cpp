@@ -375,6 +375,9 @@ void WideLayerViewport(PPCRegister& r4, PPCRegister& r31)
         SetI(vp + 4, v0);
         SetI(vp + 12, std::max(1, v1 - v0));
     }
+    // A clip rect (the radar's): the renderer places it by its canvas pixels, not the rounded guest pixels.
+    if (!swg && !fullX && !fullY)
+        ac6::gpu::NoteLayerClip(I(vp), I(vp + 4), I(vp + 8), I(vp + 12), x, y, w, h);
 }
 
 void WideLayerOrtho(PPCRegister& r4, PPCRegister& r31)
@@ -924,6 +927,15 @@ bool PipOpen(const PipWindow& p)
 }
 PipWindow s_pipWindows[2] = {};
 
+// The panels' full move across and up / down, in whole canvas pixels: on the canvas's pixel grid (a fraction of a pixel
+// left the radar's frame lines, which the renderer snaps to the grid, a part of a pixel off its background and its clip:
+// uneven gaps). Rounded once, so the panels on either side stay as far from their edges (std::round: halves away from
+// zero alike both ways).
+std::pair<float, float> EdgeMove()
+{
+    return { std::round(float(HudEdges()) * 640.0f * (Kx() - 1.0f)), std::round(float(HudEdges()) * 360.0f * (Ky() - 1.0f)) };
+}
+
 // The move for a primitive's box: whole elements by their sides, split ones by where the box is.
 std::pair<float, float> EdgeShift(EdgeMode mode, int sideX, int sideY, float x0, float x1, float y0, float y1)
 {
@@ -938,7 +950,7 @@ std::pair<float, float> EdgeShift(EdgeMode mode, int sideX, int sideY, float x0,
                 return EdgeShift(EdgeMode::Split, 0, 0, p.x, p.x, p.y, p.y);
         return { 0.0f, 0.0f };
     }
-    const float dx = float(HudEdges()) * 640.0f * (Kx() - 1.0f), dy = float(HudEdges()) * 360.0f * (Ky() - 1.0f);
+    const auto [dx, dy] = EdgeMove();
     if (mode != EdgeMode::Whole && mode != EdgeMode::Clipped)
     {
         const float cx = (x0 + x1) * 0.5f - 640.0f, cy = (y0 + y1) * 0.5f - 360.0f;
@@ -982,8 +994,9 @@ std::pair<float, float> PanelShift(EdgeMode mode, float x0, float x1, float y0, 
         sx = cx < 0.0f ? -w : w;
         sy = cy < 0.0f ? -w : w;
     }
-    const float dx = float(HudEdges()) * 640.0f * (Kx() - 1.0f), dy = float(HudEdges()) * 360.0f * (Ky() - 1.0f);
-    return { dx * sx, dy * sy };
+    // (Whole pixels also where a panel's move fades in, the same either side.)
+    const auto [dx, dy] = EdgeMove();
+    return { std::round(dx * sx), std::round(dy * sy) };
 }
 
 HudCounts s_pipLabelFrom{};   // the lists' counts where the HUD draw's picture-in-picture label block starts
@@ -1355,9 +1368,12 @@ void DestroyedListEnd()
 }
 
 // The HUD draw (CAce6HudImpl slot 15, r3 = the HUD): its renderer interface for the element wrappers below.
+static uint32_t s_hudInterface = 0;   // the same at any aspect (the pause map, below)
 extern "C" PPC_FUNC(__imp__sub_8223DDB0);
 PPC_FUNC(sub_8223DDB0)
 {
+    if (const uint32_t r = ctx.r3.u32 + 0x28D20; uint32_t(I(r)) == 0x820554E8)
+        s_hudInterface = r;
     if (HudEdges() != 0.0 && Wide() != 1.0f)
     {
         const uint32_t r = ctx.r3.u32 + 0x28D20;
@@ -1460,9 +1476,53 @@ PPC_FUNC(sub_82274C80)
     extern "C" PPC_FUNC(__imp__sub_##addr);                                                                             \
     PPC_FUNC(sub_##addr) { DrawHudElement<__imp__sub_##addr>(ctx, base, mode, sx, sy); }
 
-AC6_HUD_EDGE_ELEMENT(82248E98, EdgeMode::Clipped, -1, 1) // CAce6HudRader
-AC6_HUD_EDGE_ELEMENT(82249110, EdgeMode::Clipped, -1, 1) // CAce6HudRader (its second part)
+
+// CAce6HudRader also draws the pause menu's map: its image a sprite of texture 0x9205, 265 x 265 texels at 1:1, placed at
+// (827.5, 99.5): half a pixel off the grid. At 720p each pixel samples halfway between two texels and the image's bright
+// edge texels (its border) come out as a dim one-pixel line, as on the console. Above 720p the same place gives one
+// bright pixel (a sample past the texture's edge) and a faint one. There such a sprite (that texture, at half pixels
+// both ways) moves half a pixel left and up, onto the pixels it covers at 720p: its texels on the guest's pixels, the
+// border one guest pixel thick (two host pixels at 1440p).
+namespace {
+
+constexpr uint32_t kPauseMapTexture = 0x9205;
+
+void FitPauseMap(uint32_t r, const HudCounts& before, const HudCounts& after)
+{
+    const uint32_t sprites = uint32_t(I(r + kHudBlock0 + 64));
+    for (uint32_t e = before.sprites[0]; e < after.sprites[0] && e < before.sprites[0] + 4096; e++)
+    {
+        const uint32_t sp = sprites + e * 112;
+        const float x = F(sp + 72), y = F(sp + 76);
+        auto half = [](float v) { return std::fabs(v - std::floor(v) - 0.5f) < 0.001f; };
+        if (uint32_t(I(sp + 8)) != kPauseMapTexture || !half(x) || !half(y))
+            continue;
+        SetF(sp + 72, x - 0.5f);
+        SetF(sp + 92, F(sp + 92) - 0.5f);
+        SetF(sp + 76, y - 0.5f);
+        SetF(sp + 96, F(sp + 96) - 0.5f);
+    }
+}
+
+template <PPCFunc* Original>
+void DrawRadar(PPCContext& ctx, uint8_t* base)
+{
+    const uint32_t r = s_hudInterface;
+    const bool fit = r && std::min(ac6::gpu::g_video.frameScaleX, ac6::gpu::g_video.frameScaleY) > 1.001f;
+    const HudCounts before = fit ? CountHud(r) : HudCounts{};
+    DrawHudElement<Original>(ctx, base, EdgeMode::Clipped, -1, 1);
+    if (fit)
+        FitPauseMap(r, before, CountHud(r));
+}
+
+} // namespace
+
+extern "C" PPC_FUNC(__imp__sub_82248E98);
+PPC_FUNC(sub_82248E98) { DrawRadar<__imp__sub_82248E98>(ctx, base); }   // CAce6HudRader
+extern "C" PPC_FUNC(__imp__sub_82249110);
+PPC_FUNC(sub_82249110) { DrawRadar<__imp__sub_82249110>(ctx, base); }   // CAce6HudRader (its second part)
 AC6_HUD_EDGE_ELEMENT(82238948, EdgeMode::Whole, 1, 1)    // CAce6HudWeapon
+
 AC6_HUD_EDGE_ELEMENT(82239280, EdgeMode::Whole, -1, 1)   // CAce6HudOrder
 AC6_HUD_EDGE_ELEMENT(8223BF58, EdgeMode::Split, 0, 0)    // CAce6HudMulti (score, clock)
 AC6_HUD_EDGE_ELEMENT(82237C90, EdgeMode::Split, 0, 0)    // CAce6HudMulti (its second part)

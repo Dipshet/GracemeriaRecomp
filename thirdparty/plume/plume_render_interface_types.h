@@ -1300,6 +1300,7 @@ namespace plume {
         float slopeScaledDepthBias = 0.0f;
         bool dynamicDepthBiasEnabled = false;
         bool dynamicBlendConstantsEnabled = false;   // AC6 runtime addition: blend constants set per draw (setBlendConstants)
+        bool dynamicLineWidthEnabled = false;        // AC6 runtime addition: line width set per draw (setLineWidth), line topologies
         bool depthEnabled = false;
         bool depthWriteEnabled = false;
         bool stencilEnabled = false;
@@ -1828,6 +1829,8 @@ namespace plume {
 
         // Subgroup votes (all/any) in fragment shaders.
         bool fragmentWaveVote = false;
+        // AC6 runtime addition: the widest line setLineWidth can draw (1 without the wideLines feature).
+        float maxLineWidth = 1.0f;
 
         // GPU Upload heap.
         bool gpuUploadHeap = false;

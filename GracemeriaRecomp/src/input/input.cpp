@@ -5,6 +5,7 @@
 #include "game/frame_rate_fixes.h"
 #include "game/game_modes.h"
 #include "gpu/frame_rate.h"
+#include "gpu/renderer.h"
 
 #include "log.h"
 #include "settings.h"
@@ -121,6 +122,7 @@ struct ControlCommand
     uint32_t buttons = 0;   // macro inputs (ParseButtons)
     uint32_t frames = 0;    // pressed for (wait: idle for, until: the period)
     std::string untilMode;  // until: the mode that ends it
+    bool shot = false;      // shot: a screenshot of the next frame (gpu::RequestScreenshot)
 };
 struct Control
 {
@@ -181,6 +183,11 @@ void ReadControl(Control& c, uint32_t frame)
         }
         else if (verb == "wait")
             cmd.frames = uint32_t(std::max(1, std::atoi(rest.c_str())));
+        else if (verb == "shot")
+        {
+            cmd.shot = true;
+            cmd.frames = 1;
+        }
         else if (verb == "until")
         {
             const size_t a = rest.find(' '), b = a == std::string::npos ? a : rest.find(' ', a + 1);
@@ -220,6 +227,8 @@ void RunControl(Control& c, uint32_t frame, PadState& pad)
         std::ofstream(c.path + ".done", std::ios::binary | std::ios::trunc) << c.done << ' ' << frame << ' ' << game::CurrentMode() << '\n';
         return;
     }
+    if (cmd.shot && c.phase == 0)
+        gpu::RequestScreenshot();
     const uint32_t gap = cmd.buttons ? 10u : 0u;
     if (c.phase < cmd.frames && cmd.buttons)
     {

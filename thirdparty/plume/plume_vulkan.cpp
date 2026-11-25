@@ -140,6 +140,8 @@ namespace plume {
         VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME,
         // AC6: GPU crash diagnostics (writeBreadcrumb, VulkanDeviceFaultReport).
         VK_AMD_BUFFER_MARKER_EXTENSION_NAME,
+        // AC6: Bresenham lines (bresenhamLinesSupported).
+        VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME,
         VK_EXT_DEVICE_FAULT_EXTENSION_NAME,
         // Vulkan spec requires this to be enabled if supported by the driver.
         VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
@@ -1603,6 +1605,13 @@ namespace plume {
         rasterization.rasterizerDiscardEnable = VK_FALSE;
         rasterization.polygonMode = VK_POLYGON_MODE_FILL;
         rasterization.lineWidth = 1.0f;
+        // AC6: line pipelines (they have the dynamic line width) rasterize as Bresenham lines (bresenhamLinesSupported).
+        VkPipelineRasterizationLineStateCreateInfoEXT lineState = {};
+        if (desc.dynamicLineWidthEnabled && device->bresenhamLinesSupported) {
+            lineState.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT;
+            lineState.lineRasterizationMode = VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT;
+            rasterization.pNext = &lineState;
+        }
         rasterization.cullMode = toVk(desc.cullMode);
         rasterization.frontFace = toVk(desc.frontFace);
 
@@ -1709,6 +1718,10 @@ namespace plume {
 
         if (desc.dynamicBlendConstantsEnabled) {
             dynamicStates.emplace_back(VK_DYNAMIC_STATE_BLEND_CONSTANTS);
+        }
+
+        if (desc.dynamicLineWidthEnabled) {
+            dynamicStates.emplace_back(VK_DYNAMIC_STATE_LINE_WIDTH);
         }
 
         VkPipelineDynamicStateCreateInfo dynamicState = {};
@@ -1844,13 +1857,16 @@ namespace plume {
     }
 
     VkPipeline VulkanDevice::preRasterizationLibrary(const VulkanPipelineLayout *layout, const VulkanShader *shader, const RenderSpecConstant *specConstants,
-        uint32_t specConstantsCount, bool depthClamp)
+        uint32_t specConstantsCount, bool depthClamp, bool dynamicLineWidth)
     {
         std::string key = "PR";
         appendValue(key, layout->vk);
         appendValue(key, shader->serial);
         appendSpec(key, specConstants, specConstantsCount);
         appendValue(key, depthClampDynamicSupported ? false : depthClamp);
+        if (dynamicLineWidth) {
+            key += "LW";   // (keys without it stay as they were)
+        }
         return pipelineLibrary(key, [&] {
             std::vector<VkSpecializationMapEntry> specEntries(specConstantsCount);
             std::vector<uint32_t> specData(specConstantsCount);
@@ -1866,10 +1882,20 @@ namespace plume {
             rasterization.depthClampEnable = depthClamp;
             rasterization.polygonMode = VK_POLYGON_MODE_FILL;
             rasterization.lineWidth = 1.0f;
+            VkPipelineRasterizationLineStateCreateInfoEXT lineState = {};
+            if (dynamicLineWidth && bresenhamLinesSupported) {   // (a line pipeline's: Bresenham lines)
+                lineState.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT;
+                lineState.lineRasterizationMode = VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT;
+                rasterization.pNext = &lineState;
+            }
+            std::vector<VkDynamicState> dynamicStates(kPreRasterizationDynamic, kPreRasterizationDynamic + preRasterizationDynamicCount(this));
+            if (dynamicLineWidth) {
+                dynamicStates.push_back(VK_DYNAMIC_STATE_LINE_WIDTH);
+            }
             VkPipelineDynamicStateCreateInfo dynamicState = {};
             dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-            dynamicState.pDynamicStates = kPreRasterizationDynamic;
-            dynamicState.dynamicStateCount = preRasterizationDynamicCount(this);
+            dynamicState.pDynamicStates = dynamicStates.data();
+            dynamicState.dynamicStateCount = uint32_t(dynamicStates.size());
             VkGraphicsPipelineCreateInfo info = {};
             info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
             info.pStages = &stage;
@@ -2033,7 +2059,7 @@ namespace plume {
             });
 
             const VkPipeline preRasterization = device->preRasterizationLibrary(layout, vertexShader, desc.specConstants, desc.specConstantsCount,
-                rasterization.depthClampEnable);
+                rasterization.depthClampEnable, desc.dynamicLineWidthEnabled);
             const VkPipeline fragmentShader = device->fragmentShaderLibrary(layout, pixelShader, desc.specConstants, desc.specConstantsCount);
             if (vertexInputLibrary != VK_NULL_HANDLE && fragmentOutputLibrary != VK_NULL_HANDLE && preRasterization != VK_NULL_HANDLE &&
                 fragmentShader != VK_NULL_HANDLE) {
@@ -2060,6 +2086,9 @@ namespace plume {
         dynamicStates.insert(dynamicStates.end(), std::begin(kFragmentShaderDynamic), std::end(kFragmentShaderDynamic));
         if (desc.dynamicBlendConstantsEnabled) {
             dynamicStates.push_back(VK_DYNAMIC_STATE_BLEND_CONSTANTS);
+        }
+        if (desc.dynamicLineWidthEnabled) {
+            dynamicStates.push_back(VK_DYNAMIC_STATE_LINE_WIDTH);
         }
         VkPipelineDynamicStateCreateInfo dynamicState = {};
         dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
@@ -3723,6 +3752,10 @@ namespace plume {
         vkCmdSetBlendConstants(vk, constants);
     }
 
+    void VulkanCommandList::setLineWidth(float width) {
+        vkCmdSetLineWidth(vk, width);
+    }
+
     static void clearCommonRectVector(uint32_t width, uint32_t height, const RenderRect *clearRects, uint32_t clearRectsCount, std::vector<VkClearRect> &rectVector) {
         rectVector.clear();
 
@@ -4630,6 +4663,14 @@ namespace plume {
             featuresChain = &presentWaitFeatures;
         }
 
+        // AC6: VK_EXT_line_rasterization, for Bresenham lines.
+        VkPhysicalDeviceLineRasterizationFeaturesEXT lineRasterizationFeatures = {};
+        if (supportedOptionalExtensions.find(VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME) != supportedOptionalExtensions.end()) {
+            lineRasterizationFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_EXT;
+            lineRasterizationFeatures.pNext = featuresChain;
+            featuresChain = &lineRasterizationFeatures;
+        }
+
         // AC6: VK_EXT_device_fault, for the driver's own description of a lost device.
         VkPhysicalDeviceFaultFeaturesEXT faultFeatures = {};
         if (supportedOptionalExtensions.find(VK_EXT_DEVICE_FAULT_EXTENSION_NAME) != supportedOptionalExtensions.end()) {
@@ -4778,6 +4819,18 @@ namespace plume {
         if (deviceFaultSupported) {
             faultFeatures.pNext = createDeviceChain;
             createDeviceChain = &faultFeatures;
+        }
+
+        bresenhamLinesSupported = lineRasterizationFeatures.bresenhamLines && [] { const char *v = getenv("AC6_BRESENHAM_LINES"); return !(v != nullptr && strcmp(v, "0") == 0); }();
+        if (bresenhamLinesSupported) {
+            VkPhysicalDeviceLineRasterizationFeaturesEXT &f = lineRasterizationFeatures;
+            f.rectangularLines = VK_FALSE;
+            f.smoothLines = VK_FALSE;
+            f.stippledRectangularLines = VK_FALSE;
+            f.stippledBresenhamLines = VK_FALSE;
+            f.stippledSmoothLines = VK_FALSE;
+            f.pNext = createDeviceChain;
+            createDeviceChain = &f;
         }
         // AC6_GPU_BREADCRUMBS=fill: the breadcrumbs as written without VK_AMD_buffer_marker (Intel's Windows driver);
         // =sync: each written once the work before it has finished (writeBreadcrumb).
@@ -5009,6 +5062,7 @@ namespace plume {
         capabilities.presentWait = presentWaitSupported;
         capabilities.displayTiming = supportedOptionalExtensions.find(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME) != supportedOptionalExtensions.end();
         capabilities.maxTextureSize = physicalDeviceProperties.limits.maxImageDimension2D;
+        capabilities.maxLineWidth = deviceFeatures.features.wideLines ? std::max(1.0f, physicalDeviceProperties.limits.lineWidthRange[1]) : 1.0f;
         capabilities.preferHDR = memoryHeapSize > (512 * 1024 * 1024);
         capabilities.dynamicDepthBias = true;
         capabilities.queryPools = true;

@@ -78,7 +78,7 @@ struct HostShader
     // their libraries are made per module, so a shader first met in a mission finds them built.
     std::shared_ptr<plume::RenderShader> shader;
     uint64_t codeHash = 0;
-    uint32_t textureSlots = 0;          // fetch slots its texture fetches read (translated this run only: diagnostics)
+    uint32_t textureSlots = 0;          // fetch slots its texture fetches read (0: none, an untextured shader)
     // Translation options it depends on (bit 0 High quality DoF, bit 1 round bloom, 0: none) and
     // those it was translated with. Such shaders are kept per option state (in their hash) and not in the disk cache.
     uint32_t optionUse = 0, options = 0;

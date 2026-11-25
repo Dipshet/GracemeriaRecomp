@@ -84,6 +84,7 @@ public:
     void runRenderPass() override;
     void setDepthBias(float depthBias, float depthBiasClamp, float slopeScaledDepthBias) override;
     void setBlendConstants(const float constants[4]) override;
+    void setLineWidth(float width) override;
     void clearColor(uint32_t attachmentIndex, plume::RenderColor colorValue, const plume::RenderRect* clearRects, uint32_t clearRectsCount) override;
     void clearDepthStencil(bool clearDepth, bool clearStencil, float depthValue, uint32_t stencilValue, const plume::RenderRect* clearRects,
         uint32_t clearRectsCount) override;

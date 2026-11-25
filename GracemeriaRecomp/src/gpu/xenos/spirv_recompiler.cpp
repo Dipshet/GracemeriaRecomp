@@ -22,7 +22,7 @@ constexpr uint32_t kSharedSamplerIndices = 384, kSharedBooleans = 512, kSharedHa
     kSharedOverrideSampler = 740, kSharedPointParams = 804, kSharedPointConstantDiameter = 820, kSharedInterpolatorCentroid = 828,
     kSharedDrawFlags = 832, kSharedResolutionScale = 836, kSharedScaledTextures = 840, kSharedResolutionScaleY = 844,
     kSharedFallbackAddress = 848, kSharedDepthBias = 536, kSharedMotion = 856, kSharedAltScaledTextures = 920, kSharedAltScale = 924,
-    kSharedRelight = 932, kSharedTileTaps = 972, kSharedCloudRim = 976, kSharedSeaImage = 980, kSharedSea = 984,
+    kSharedRelight = 932, kSharedTileTaps = 972, kSharedCloudRim = 976, kSharedSeaImage = 980, kSharedSea = 984, kSharedHostGrid = 1024, kSharedHostView = 1040,
     kSharedZero = 540;   // (SharedConstants::zero: always 0)
 // A motion output with no motion known (renderer.cpp kMotionUnknown).
 constexpr float kMotionUnknown = 30000.0f;
@@ -225,7 +225,7 @@ uint32_t SpirvRecompiler::ConstantBuffer(uint32_t binding)
     if (!constantBuffers[binding])
     {
         const uint32_t element = binding == 2 ? b.TypeVector(b.U32(), 4) : b.Vec(4);
-        const uint32_t array = b.TypeArray(element, binding == 0 ? 256 : binding == 1 ? 224 : 64);
+        const uint32_t array = b.TypeArray(element, binding == 0 ? 256 : binding == 1 ? 224 : 67);
         b.Decorate(array, spv::DecorationArrayStride, { 16 });
         const uint32_t block = b.TypeStruct({ array });
         b.Decorate(block, spv::DecorationBlock);
@@ -665,6 +665,59 @@ void SpirvRecompiler::ExitPixelOrVertex()
         const Value w = Extract(pos, 3);
         const Value add = Arith(spv::OpFMul, SharedVec(kSharedHalfPixelOffset, 2), w);
         StoreMasked(oPos, 0b0011, Arith(spv::OpFAdd, Swizzle(pos, { 0, 1 }), add));
+    }
+    // AC6: 2D draws above the guest's size, the vertex moved onto whole host pixels by its place in the game's pixels
+    // (its place on their grid g = ndc x A + B, y down, with (Ax, Ay, Bx, By) in the point sprites' parameters, which
+    // these draws don't use; a guest pixel boundary k is at host k x P + O, the host grid: renderer.cpp's snap grid).
+    // One rounding for both, R(k) = floor(k x P + O + 0.5), so a fill's edge and the line beside it meet at any scale.
+    // Triangles (SPEC_CONSTANT_EDGE_SNAP), a vertex on the half-pixel grid (on a pixel centre or edge): onto R(k), k
+    // the first pixel the edge covers on the left / top (the left and top tie rule: ceil(p - 0.5)). Lines
+    // (SPEC_CONSTANT_LINE_SNAP), a vertex on the half-pixel grid: onto the centre of the guest pixel a 1-pixel line
+    // through it covers (the one left of and above it, the pixel's own when it is in it: ceil(p) - 0.5), for the line
+    // parallelograms' geometry shader, which puts them on the host grid. Others stay (circles, moving lines). p on the
+    // console's 1/16-pixel grid.
+    {
+        auto scope = b.BeginIf(SpecBits(SPEC_CONSTANT_LINE_SNAP | SPEC_CONSTANT_EDGE_SNAP | SPEC_CONSTANT_LINE_GRID));
+        const Value pos = LoadVar(oPos, 4);
+        const Value w = Extract(pos, 3);
+        const Value params = SharedVec(kSharedPointParams, 4);
+        const Value scale = Swizzle(params, { 0, 1 }), offset = Swizzle(params, { 2, 3 });
+        const Value ndc = Arith(spv::OpFDiv, Swizzle(pos, { 0, 1 }), w);
+        const Value pixel = Arith(spv::OpFAdd, Arith(spv::OpFMul, ndc, scale), offset);
+        const Value grid = Arith(spv::OpFMul, Glsl(GLSLstd450Round, { Arith(spv::OpFMul, pixel, { F(16.0f), 1 }) }), { F(1.0f / 16.0f), 1 });
+        const Value hostGrid = SharedVec(kSharedHostGrid, 4);
+        const Value hostScale = Swizzle(hostGrid, { 0, 1 }), hostOffset = Swizzle(hostGrid, { 2, 3 });
+        // (A vertex only where it is on the half-pixel grid, as frames, boxes and fills are: a circle's or a moving line's
+        // vertices stay where they are, else the range circles turned into the console's pixel steps, twice or three times
+        // as coarse as the screen's, and moved by them as they zoomed.)
+        const Value twice = Arith(spv::OpFMul, pixel, { F(2.0f), 1 });
+        const Value offHalf = Glsl(GLSLstd450FAbs, { Arith(spv::OpFSub, twice, Glsl(GLSLstd450Round, { twice })) });
+        const uint32_t onHalf = b.Emit(spv::OpFOrdLessThan, BoolType(2), { offHalf.id, Splat({ F(1.0f / 256.0f), 1 }, 2).id });
+        auto boundary = [&](const Value& k) {   // R(k): the guest pixel boundary k on whole host pixels
+            return Glsl(GLSLstd450Floor, { Arith(spv::OpFAdd, Arith(spv::OpFAdd, Arith(spv::OpFMul, k, hostScale), hostOffset), { F(0.5f), 1 }) });
+        };
+        const Value host = Arith(spv::OpFAdd, Arith(spv::OpFMul, pixel, hostScale), hostOffset);
+        const Value edgeHost = Select(onHalf, boundary(Glsl(GLSLstd450Ceil, { Arith(spv::OpFSub, grid, { F(0.5f), 1 }) })), host);
+        const Value lineHost = Arith(spv::OpFAdd, Arith(spv::OpFMul, Select(onHalf, Arith(spv::OpFSub, Glsl(GLSLstd450Ceil, { grid }), { F(0.5f), 1 }), pixel),
+            hostScale), hostOffset);
+        const uint32_t line = SpecBits(SPEC_CONSTANT_LINE_SNAP), edgeSnap = SpecBits(SPEC_CONSTANT_EDGE_SNAP);
+        const Value targetHost = Select(b.Emit(spv::OpCompositeConstruct, BoolType(2), { line, line }), lineHost,
+            Select(b.Emit(spv::OpCompositeConstruct, BoolType(2), { edgeSnap, edgeSnap }), edgeHost, host));
+        // (LINE_GRID alone: the vertex stays, mapped below.)
+        // (The guest grid also to the line parallelograms' geometry shader, in the point-sprite coordinate: lines have none.)
+        {
+            auto lineScope = b.BeginIf(SpecBits(SPEC_CONSTANT_LINE_SNAP | SPEC_CONSTANT_LINE_GRID));
+            b.Store(oPointCoord, params.id);
+            b.EndIf(lineScope);
+        }
+        // Onto the viewport the draw has (whole host pixels; its clip falls where the snapped edges do): its contents at
+        // the frame's scale from the guest viewport's exact place (rounded, it would scale them by its own ratio).
+        const Value hostView = SharedVec(kSharedHostView, 4);
+        const Value snapped = Arith(spv::OpFDiv, Arith(spv::OpFSub, targetHost, Swizzle(hostView, { 2, 3 })), Swizzle(hostView, { 0, 1 }));
+        const uint32_t positive = b.Emit(spv::OpFOrdGreaterThan, b.Bool(), { w.id, F(0.0f) });
+        StoreMasked(oPos, 0b0011, Select(b.Emit(spv::OpCompositeConstruct, BoolType(2), { positive, positive }),
+            Arith(spv::OpFMul, snapped, w), Swizzle(pos, { 0, 1 })));
+        b.EndIf(scope);
     }
     // AC6: the draw's constant polygon offset as a depth offset, oPos.z += g_DepthBias * oPos.w: exact for any depth
     // format, where Vulkan's constant depth bias on the float depth buffer scales with each depth's exponent.

@@ -307,6 +307,11 @@ void DeferredCommandList::setBlendConstants(const float constants[4])
     });
 }
 
+void DeferredCommandList::setLineWidth(float width)
+{
+    Record([=](RenderCommandList& cl) { cl.setLineWidth(width); });
+}
+
 void DeferredCommandList::clearColor(uint32_t attachmentIndex, RenderColor colorValue, const RenderRect* clearRects, uint32_t clearRectsCount)
 {
     const auto* r = Copy(clearRects, clearRectsCount);

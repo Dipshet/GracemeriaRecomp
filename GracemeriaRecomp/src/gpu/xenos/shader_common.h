@@ -19,6 +19,15 @@
 // game's shader wrote it) against the plane in vertex constant 255, which the renderer writes into the draw's own copy
 // of the constants. Read from the shared draw flags only.
 #define SPEC_CONSTANT_PLANAR_CLIP       (1 << 10)
+// AC6: line draws above the guest's size: the vertex shader moves each vertex onto the centre of the game's pixel a
+// 1-pixel line covers there, the pixels' grid in the point sprites' parameters. Read from the shared draw flags only.
+#define SPEC_CONSTANT_LINE_SNAP         (1 << 11)
+// AC6: the 2D layers' triangles above the guest's size: a vertex exactly on a guest pixel's centre moves half a pixel
+// left / up, onto the edge of the pixels the console covers. Read from the shared draw flags only.
+#define SPEC_CONSTANT_EDGE_SNAP         (1 << 12)
+// AC6: 2D lines at the guest's size: the vertex shader writes the snap grid for the line parallelograms' geometry
+// stage, the vertex not moved. Read from the shared draw flags only.
+#define SPEC_CONSTANT_LINE_GRID         (1 << 13)
 
 #ifdef UNLEASHED_RECOMP
     #define SPEC_CONSTANT_BICUBIC_GI_FILTER (1 << 2)

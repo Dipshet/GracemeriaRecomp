@@ -40,6 +40,13 @@ uint64_t RendererHoldForOverlay();
 // The frame ring (AC6_RING=<seconds>, only with AC6_CAPTURES=1): F11 writes the frames it holds (the last seconds, at
 // 60 a second) as BMPs into a ring_<date>_<time> folder next to the log.
 void RequestRingDump();
+// A screenshot of the next frame presented (frame_<n>.bmp next to the log, at the frame's size): the control channel's
+// "shot" (tests).
+void RequestScreenshot();
+// A 2D layer's clip rect on a wide or narrow output (game/widescreen.cpp WideLayerViewport): the guest viewport it was
+// moved and rounded to (whole guest pixels, wider or taller than the canvas's), and the rect in canvas pixels. A draw into
+// the frame with that viewport gets the rect's exact place on the screen instead, on the canvas's pixel grid.
+void NoteLayerClip(int32_t gx, int32_t gy, int32_t gw, int32_t gh, int32_t cx, int32_t cy, int32_t cw, int32_t ch);
 // Builds the shader's pipeline library ahead of time where plume links pipelines from per-shader libraries.
 // False when it doesn't (the shader module is then left for the first draw).
 struct HostShader;

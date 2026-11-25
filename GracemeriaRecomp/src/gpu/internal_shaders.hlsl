@@ -43,6 +43,181 @@ float4 main(UiOut i) : SV_Target0
     return c;
 }
 #endif
+#elif defined(LINE_2D)
+// The 2D's line draws (renderer.cpp's line parallelograms) on whole host pixels. From the shared block the host grid (a
+// guest pixel boundary k at host k x P + O; R(k) = floor(k x P + O + 0.5), the fills' rounding: the vertex shader's
+// edge snap) and the drawn viewport (host = ndc x V + W); location 16 from the vertex shader (the 2D's grid: only
+// whether it is there). A line is T = ceil(P) host pixels thick at every place (at 720p 1, at 1440p 2; at 900p and 1080p the
+// guest pixel's 1.25 or 1.5 host pixels gave 1 or 2 by its place).
+// A frame's side (axis-aligned, its vertices on guest pixel centres, the vertex shader's line snap): the rectangle of its
+// guest pixels on the host grid, T thick from the edge on the box's inside (the right of the line's way: boxes are
+// drawn clockwise; the left for the segments renderer.cpp marks, of strips the other way round) outwards, so it meets the fill inside and never covers it (a
+// translucent fill drawn after the frame darkened the part it covered). Along it from its first pixel (its square, the
+// band's T from its far edge back: the corner the side before it drew) to the last's start (the next side draws the
+// corner): a strip's corners whole. Other lines (circles, the HUD's swaying boxes): Bresenham's parallelogram in bands of
+// T host pixels, from half a band before its start to half a band before its end along its main axis (the first pixel
+// in, the last out: the next segment draws the shared one). The outputs are the vertices' (the start's at the start,
+// the end's at the end), location 16 cleared.
+struct GsVert
+{
+    float4 pos : SV_Position;
+    [[vk::location(0)]] float4 t0 : TEXCOORD0;
+    [[vk::location(1)]] float4 t1 : TEXCOORD1;
+    [[vk::location(2)]] float4 t2 : TEXCOORD2;
+    [[vk::location(3)]] float4 t3 : TEXCOORD3;
+    [[vk::location(4)]] float4 t4 : TEXCOORD4;
+    [[vk::location(5)]] float4 t5 : TEXCOORD5;
+    [[vk::location(6)]] float4 t6 : TEXCOORD6;
+    [[vk::location(7)]] float4 t7 : TEXCOORD7;
+    [[vk::location(8)]] float4 t8 : TEXCOORD8;
+    [[vk::location(9)]] float4 t9 : TEXCOORD9;
+    [[vk::location(10)]] float4 t10 : TEXCOORD10;
+    [[vk::location(11)]] float4 t11 : TEXCOORD11;
+    [[vk::location(12)]] float4 t12 : TEXCOORD12;
+    [[vk::location(13)]] float4 t13 : TEXCOORD13;
+    [[vk::location(14)]] float4 t14 : TEXCOORD14;
+    [[vk::location(15)]] float4 t15 : TEXCOORD15;
+    [[vk::location(16)]] float4 t16 : TEXCOORD16;
+    [[vk::location(17)]] float4 t17 : TEXCOORD17;
+};
+
+// The SPIR-V backend's shared block (set 4, binding 2: renderer.cpp SharedConstants), its host grid at byte 1024, the
+// drawn viewport at 1040, the counterclockwise segments' bits at 1056.
+[[vk::binding(2, 4)]] cbuffer LineShared
+{
+    uint4 g_LineShared[67];
+};
+
+float2 HostEdge(float2 k, float2 P, float2 O)
+{
+    return floor(k * P + O + 0.5);
+}
+
+void EmitCorner(GsVert from, float2 host, float2 V, float2 W, inout TriangleStream<GsVert> stream)
+{
+    GsVert o = from;
+    o.pos.xy = (host - W) / V * o.pos.w;
+    o.t16 = float4(0.0, 0.0, 0.0, 0.0);
+    stream.Append(o);
+}
+
+[maxvertexcount(4)]
+void main(line GsVert v[2], uint primitive : SV_PrimitiveID, inout TriangleStream<GsVert> stream)
+{
+    if (abs(v[0].t16.x) < 1e-6 || abs(v[0].t16.y) < 1e-6 || v[0].pos.w <= 0.0 || v[1].pos.w <= 0.0)
+        return;
+    const float2 P = asfloat(g_LineShared[64].xy), O = asfloat(g_LineShared[64].zw);
+    // (The positions here are after the vertex shader's y flip: the viewport's y scale with its sign turned.)
+    const float2 V = asfloat(g_LineShared[65].xy) * float2(1.0, -1.0), W = asfloat(g_LineShared[65].zw);
+    if (!(P.x > 0.0) || !(P.y > 0.0) || abs(V.x) < 1e-6 || abs(V.y) < 1e-6)
+        return;
+    const float2 T = ceil(P - 1.0 / 1024.0);
+    const float2 g0 = (v[0].pos.xy / v[0].pos.w * V + W - O) / P, g1 = (v[1].pos.xy / v[1].pos.w * V + W - O) / P;
+    const float2 along = g1 - g0;
+    if (dot(along, along) < 1e-8)
+        return;
+    const bool xMajor = abs(along.x) >= abs(along.y);
+    const float2 f0 = abs(frac(g0) - 0.5), f1 = abs(frac(g1) - 0.5);
+    const bool centres = all(f0 < 1.0 / 64.0) && all(f1 < 1.0 / 64.0);
+    const bool axis = xMajor ? abs(along.y) < 1.0 / 64.0 : abs(along.x) < 1.0 / 64.0;
+    // A straight side whose own pixels are all outside the drawn viewport stays cut away: a 2D layer's clip, as at 720p.
+    // Its band, wider than the guest pixel above 720p, would reach back over the edge (the radar's range circles, which
+    // the game flattens onto the radar's edge, x 285.5: a line in guest column 285, just outside the clip).
+    if (axis)
+    {
+        const float2 vMin = W - abs(V), vMax = W + abs(V);
+        const float k = xMajor ? floor(g0.y) : floor(g0.x);
+        const float own0 = xMajor ? HostEdge(float2(0.0, k), P, O).y : HostEdge(float2(k, 0.0), P, O).x;
+        const float own1 = xMajor ? HostEdge(float2(0.0, k + 1.0), P, O).y : HostEdge(float2(k + 1.0, 0.0), P, O).x;
+        const float edge0 = xMajor ? vMin.y : vMin.x, edge1 = xMajor ? vMax.y : vMax.x;
+        if (own0 >= edge1 - 1e-3 || own1 <= edge0 + 1e-3)
+            return;
+    }
+    if (centres && axis)
+    {
+        const float2 c0 = floor(g0), c1 = floor(g1);
+        const uint2 flipBits = g_LineShared[66].xy;
+        const bool flip = primitive < 64 && ((primitive < 32 ? flipBits.x >> primitive : flipBits.y >> (primitive - 32)) & 1) != 0;
+        // Along the main axis by the way it goes (from the first pixel's square: the corner the side before drew, whichever
+        // way round the box is, as the side before's band lies on the inside); across from the inside's edge outwards.
+        const float2 alongLo = HostEdge(c0 + 1.0, P, O) - T, alongHi = HostEdge(c1, P, O);       // forwards
+        const float2 backLo = HostEdge(c1 + 1.0, P, O), backHi = HostEdge(c0, P, O) + T;         // backwards
+        float2 lo, hi;
+        if (xMajor)
+        {
+            const bool forwards = along.x > 0.0;
+            lo.x = forwards ? alongLo.x : backLo.x;
+            hi.x = forwards ? alongHi.x : backHi.x;
+            const float k = c0.y;
+            if (forwards != flip)   // inside below: from the pixel's bottom edge up
+            {
+                hi.y = HostEdge(float2(0.0, k + 1.0), P, O).y;
+                lo.y = hi.y - T.y;
+            }
+            else   // inside above: from its top edge down
+            {
+                lo.y = HostEdge(float2(0.0, k), P, O).y;
+                hi.y = lo.y + T.y;
+            }
+        }
+        else
+        {
+            const bool forwards = along.y > 0.0;
+            lo.y = forwards ? alongLo.y : backLo.y;
+            hi.y = forwards ? alongHi.y : backHi.y;
+            const float k = c0.x;
+            if (forwards != flip)   // inside on the left: from the pixel's left edge rightwards
+            {
+                lo.x = HostEdge(float2(k, 0.0), P, O).x;
+                hi.x = lo.x + T.x;
+            }
+            else   // inside on the right: from its right edge leftwards
+            {
+                hi.x = HostEdge(float2(k + 1.0, 0.0), P, O).x;
+                lo.x = hi.x - T.x;
+            }
+        }
+        if (hi.x <= lo.x || hi.y <= lo.y)
+            return;
+        // (The start's corner from the start vertex, the end's from the end: along the main axis.)
+        const bool loIsStart = xMajor ? along.x > 0.0 : along.y > 0.0;
+        GsVert vl = v[0], vh = v[1];   // (no conditional on structs in HLSL)
+        if (!loIsStart)
+        {
+            vl = v[1];
+            vh = v[0];
+        }
+        if (xMajor)
+        {
+            EmitCorner(vl, float2(lo.x, lo.y), V, W, stream);
+            EmitCorner(vl, float2(lo.x, hi.y), V, W, stream);
+            EmitCorner(vh, float2(hi.x, lo.y), V, W, stream);
+            EmitCorner(vh, float2(hi.x, hi.y), V, W, stream);
+        }
+        else
+        {
+            EmitCorner(vl, float2(lo.x, lo.y), V, W, stream);
+            EmitCorner(vl, float2(hi.x, lo.y), V, W, stream);
+            EmitCorner(vh, float2(lo.x, hi.y), V, W, stream);
+            EmitCorner(vh, float2(hi.x, hi.y), V, W, stream);
+        }
+        stream.RestartStrip();
+        return;
+    }
+    // In bands: q = host / T.
+    const float2 q0 = (g0 * P + O) / T, q1 = (g1 * P + O) / T;
+    const float2 qa = q1 - q0;
+    const bool qxMajor = abs(qa.x) >= abs(qa.y);
+    const float2 step = qa / (qxMajor ? abs(qa.x) : abs(qa.y));   // one band along the main axis
+    const float2 m = qxMajor ? float2(0.0, 0.5) : float2(0.5, 0.0);   // half a band across it
+    const float2 s = q0 - step * 0.5, e = q1 - step * 0.5;
+    const float2 corners[4] = { s - m, s + m, e - m, e + m };
+    EmitCorner(v[0], corners[0] * T, V, W, stream);
+    EmitCorner(v[0], corners[1] * T, V, W, stream);
+    EmitCorner(v[1], corners[2] * T, V, W, stream);
+    EmitCorner(v[1], corners[3] * T, V, W, stream);
+    stream.RestartStrip();
+}
 #elif defined(LATE_BOUNDS)
 // The late pass's meshes (the canopy glass), once each: a geometry shader after the game's vertex
 // shader passes the triangles through and stores their vertices' guest clip positions (the motion vectors' input,

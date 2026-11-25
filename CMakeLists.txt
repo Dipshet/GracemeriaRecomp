@@ -372,6 +372,7 @@ add_library(ac6_runtime OBJECT
     GracemeriaRecomp/src/game/tu_mission_check.cpp
     GracemeriaRecomp/src/game/cockpit.cpp
     GracemeriaRecomp/src/game/hud_colour.cpp
+    GracemeriaRecomp/src/game/hud_sight.cpp
     GracemeriaRecomp/src/game/game_modes.cpp
     GracemeriaRecomp/src/game/frame_handoff.cpp
     GracemeriaRecomp/src/game/ui_layers.cpp

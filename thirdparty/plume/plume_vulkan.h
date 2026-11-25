@@ -382,6 +382,7 @@ namespace plume {
         void runRenderPass() override;
         void setDepthBias(float depthBias, float depthBiasClamp, float slopeScaledDepthBias) override;
         void setBlendConstants(const float constants[4]) override;
+        void setLineWidth(float width) override;
         void clearColor(uint32_t attachmentIndex, RenderColor colorValue, const RenderRect *clearRects, uint32_t clearRectsCount) override;
         void clearDepthStencil(bool clearDepth, bool clearStencil, float depthValue, uint32_t stencilValue, const RenderRect *clearRects, uint32_t clearRectsCount) override;
         void copyBufferRegion(RenderBufferReference dstBuffer, RenderBufferReference srcBuffer, uint64_t size) override;
@@ -483,6 +484,11 @@ namespace plume {
         bool bufferMarkerSupported = false;   // AC6: VK_AMD_buffer_marker (writeBreadcrumb)
         bool breadcrumbsSynchronous = false;  // AC6: AC6_GPU_BREADCRUMBS=sync (writeBreadcrumb)
         bool deviceFaultSupported = false;    // AC6: VK_EXT_device_fault (VulkanDeviceFaultReport)
+        // AC6: VK_EXT_line_rasterization's Bresenham lines, given to line pipelines: the diamond-exit rule (Direct3D's,
+        // as the console's games expect): a segment draws its first pixel and not its last, so a line strip's corners are
+        // drawn. The driver's default may draw lines as thin rectangles, which leave a corner on a pixel centre to
+        // neither segment. AC6_BRESENHAM_LINES=0: the default.
+        bool bresenhamLinesSupported = false;
         // AC6: the Vulkan 1.3 path: dynamic rendering with the rasterizer and depth/stencil state dynamic, depth clamp
         // dynamic too where VK_EXT_extended_dynamic_state3 allows, and pipelines linked from libraries
         // (VK_EXT_graphics_pipeline_library with fast linking): per shader, compiled once, ahead of time.
@@ -495,7 +501,7 @@ namespace plume {
         uint64_t pipelineLibrariesBuilt = 0;   // AC6: under pipelineLibraryMutex (diagnostics)
         VkPipeline pipelineLibrary(const std::string &key, const std::function<VkPipeline()> &create);
         VkPipeline preRasterizationLibrary(const VulkanPipelineLayout *layout, const VulkanShader *shader, const RenderSpecConstant *specConstants,
-            uint32_t specConstantsCount, bool depthClamp);
+            uint32_t specConstantsCount, bool depthClamp, bool dynamicLineWidth = false);
         VkPipeline fragmentShaderLibrary(const VulkanPipelineLayout *layout, const VulkanShader *shader, const RenderSpecConstant *specConstants,
             uint32_t specConstantsCount);
         void prepareShaderLibrary(const RenderPipelineLayout *pipelineLayout, const RenderShader *shader, bool pixel,

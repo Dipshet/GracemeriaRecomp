@@ -49,6 +49,7 @@ set(VARIANTS
     "smaaBlendPs|ps|PIXEL,SMAA_BLEND"
     "volHarvestGs|gs|VOL_HARVEST"
     "lateBoundsGs|gs|LATE_BOUNDS"
+    "line2dGs|gs|LINE_2D"
     "volVs|vs|VOL_VS"
     "volPs|ps|VOL_PS"
     "volComposePs|ps|VOL_COMPOSE"

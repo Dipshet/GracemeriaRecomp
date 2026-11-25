@@ -286,7 +286,7 @@ void ApplyPatches(uint64_t hash, std::string& hlsl)
 // carry kShaderCacheKey: a changed translator ignores them. Off with AC6_SHADER_CACHE=0, and while
 // shaders are dumped or patched.
 constexpr uint32_t kCacheMagic = 0x53364341;   // "AC6S". Bump kCacheFormat when the entry layout changes
-constexpr uint32_t kCacheFormat = 22;   // bumped whenever the entry layout or a translation's output changes
+constexpr uint32_t kCacheFormat = 23;   // bumped whenever the entry layout or a translation's output changes
 
 // The subgroup vote in pixel shaders: a masked-execution block (a jump some pixels take) that every pixel of the wave
 // skips is not run. AC6_WAVE_SKIP=0 off.
@@ -396,7 +396,8 @@ bool LoadCached(HostShader& s, bool& usesMemExport)
     uint32_t magic, keyLow, keyHigh, flags, inputs, overrides, spirvWords;
     if (!get(magic) || magic != kCacheMagic || !get(keyLow) || !get(keyHigh) ||
         (uint64_t(keyHigh) << 32 | keyLow) != CacheKey() || !get(s.specConstantsMask) || !get(s.indexedFetchStreams) ||
-        !get(s.constantFirst) || !get(s.constantEnd) || s.constantEnd > 256 || !get(flags) || !get(inputs) || inputs > 64)
+        !get(s.constantFirst) || !get(s.constantEnd) || s.constantEnd > 256 || !get(flags) || !get(s.textureSlots) || !get(inputs) ||
+        inputs > 64)
         return false;
     usesMemExport = flags & 1;
     s.vertexInputs.clear();
@@ -472,7 +473,7 @@ void WriteFileAsync(FileWrite write)
 void StoreCached(const HostShader& s, bool usesMemExport)
 {
     std::vector<uint32_t> words = { kCacheMagic, uint32_t(CacheKey()), uint32_t(CacheKey() >> 32), s.specConstantsMask,
-        s.indexedFetchStreams, s.constantFirst, s.constantEnd, usesMemExport ? 1u : 0u, uint32_t(s.vertexInputs.size()) };
+        s.indexedFetchStreams, s.constantFirst, s.constantEnd, usesMemExport ? 1u : 0u, s.textureSlots, uint32_t(s.vertexInputs.size()) };
     for (const ShaderVertexInput& in : s.vertexInputs)
         words.insert(words.end(), { in.location, in.fetchSlot, uint32_t(in.offset), in.stride, in.format, uint32_t(in.isSigned), uint32_t(in.isInteger) });
     words.push_back(uint32_t(s.samplerOverrides.size()));
