@@ -683,6 +683,44 @@ address = 0x821BB1E0
 registers = ["r28"]
 after_instruction = true
 
+# Three switches taking a package item per language (game/language.cpp): r11 = the language index just read; the
+# European edition's executable swaps French and German there.
+[[midasm_hook]]
+name = "LanguageItemSwap"
+address = 0x8214E908
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "LanguageItemSwap"
+address = 0x821AF6E4
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]
+name = "LanguageItemSwap"
+address = 0x821AFB14
+registers = ["r11"]
+after_instruction = true
+
+# The HUD's labels: r30 = the language index its set-up just read (game/language.cpp).
+[[midasm_hook]]
+name = "LanguageItemSwap"
+address = 0x822354D0
+registers = ["r30"]
+after_instruction = true
+
+# The boot logo's and the title screen's package (game/language.cpp): r4 = the package chosen (Japanese or English).
+[[midasm_hook]]
+name = "BootLogoPackage"
+address = 0x821B5520
+registers = ["r4"]
+
+[[midasm_hook]]
+name = "TitleScreenPackage"
+address = 0x821B56E4
+registers = ["r4"]
+
 # The FOV option (AC6_FOV): the three render views' (EffectScene::RenderView 0x82099370 and its twins 0x8219DFB8 /
 # 0x821A1A88) reads of the main camera's field of view for their object jobs (0x820A15F8, f1), f1 just loaded.
 [[midasm_hook]]

@@ -27,12 +27,27 @@ int LanguageBundle()
     return -1;
 }
 
+// The game's language index for a European text bundle: bundle - 2, 2 English, 3 German, 4 Italian, 5 French, 6 Spanish.
+// The European edition's locale routine gives these (German 3, French 5, Italian 4, Spanish 6) and loads bundle
+// index + 2. The cutscene subtitles (packages 466 + index) and the rest of the index's tables follow it.
+int LanguageIndex(int bundle)
+{
+    return bundle >= 4 && bundle <= 8 ? bundle - 2 : -1;
+}
+
+int GameLanguageIndex()
+{
+    const uint32_t root = ac6::g_memory.As<ac6::be<uint32_t>>(0x826E4E54)->get();
+    return root ? int(ac6::g_memory.As<ac6::be<uint32_t>>(root + 0x24474)->get()) : -1;
+}
+
 } // namespace
 
 // The locale routine (0x821BABB8, once at boot) leaves the game's language index at root + 0x24474 (root = [0x826E4E54]):
 // 0 Japanese, 1 English on this disc. The rest of the game switches on 0 to 6 (jump tables at 0x82184500, 0x821857B0,
-// 0x821949C8, 0x821AF5B8, 0x821AF8B0, 0x821B02C0, 0x821B79A8, 0x8214E738: the European edition's code), the text bundle
-// being 2 + index: a European language sets its index (bundle - 2) after it, so everything keyed by the language follows.
+// 0x821949C8, 0x821AF5B8, 0x821AF8B0, 0x821B02C0, 0x821B79A8, 0x8214E738: the European edition's code): a European
+// language sets its index (LanguageIndex) after it, so everything keyed by the language follows. Its text bundle is
+// loaded by TextBundleOverride below.
 extern "C" PPC_FUNC(__imp__sub_821BABB8);
 PPC_FUNC(sub_821BABB8)
 {
@@ -43,8 +58,11 @@ PPC_FUNC(sub_821BABB8)
     const uint32_t root = ac6::g_memory.As<ac6::be<uint32_t>>(0x826E4E54)->get();
     if (!root)
         return;
-    *ac6::g_memory.As<ac6::be<uint32_t>>(root + 0x24474) = uint32_t(bundle - 2);
-    ac6::log::Info("Language index {} (text bundle {})", bundle - 2, bundle);
+    const int index = LanguageIndex(bundle);
+    if (index < 0)
+        return;
+    *ac6::g_memory.As<ac6::be<uint32_t>>(root + 0x24474) = uint32_t(index);
+    ac6::log::Info("Language index {} (text bundle {})", index, bundle);
 }
 
 // Mid-asm hook at 0x821BB1E0 (the text bundle loader 0x821BB180, after `addi r28,r11,2`): r28 = the text bundle the
@@ -63,4 +81,53 @@ void TextBundleOverride(PPCRegister& r28)
         ac6::log::Info("Text bundle {} instead of {}", bundle, r28.u32);
     logged = true;
     r28.u64 = uint64_t(bundle);
+}
+
+// Mid-asm hooks after the index is read (r11) by three switches that take a package item per language
+// (0x8214E908, 0x821AF6E4, 0x821AFB14: the hangar's aircraft descriptions among them). Their items are in EFIGS order,
+// 3 French, 4 Italian, 5 German, while this executable picks item = index, so German got French's and French German's.
+// The European edition's executable swaps 3 and 5 there: so does this.
+// Also after the HUD's set-up (0x822353D8) reads it (r30 at 0x822354D0) to take its labels' block from the core
+// package's label table (package 1, item 51: a block of 195 labels per language). This disc's blocks are in EFIGS
+// order too (VITESSE in block 3, GESCHW. in 5); the European disc reordered them to the index instead.
+void LanguageItemSwap(PPCRegister& r)
+{
+    if (r.u32 == 3)
+        r.u64 = 5;
+    else if (r.u32 == 5)
+        r.u64 = 3;
+}
+
+namespace {
+
+// A European language's own package of a group in the European edition's order: English, then German, French,
+// Italian, Spanish (the order its executable picks them in).
+uint32_t EuropeanPackage(uint32_t english)
+{
+    switch (GameLanguageIndex())
+    {
+    case 2: return english;
+    case 3: return english + 1;   // German
+    case 5: return english + 2;   // French
+    case 4: return english + 3;   // Italian
+    case 6: return english + 4;   // Spanish
+    default: return 0;
+    }
+}
+
+} // namespace
+
+// Mid-asm hooks where the boot logo's (0x821B5520: 170 Japanese, 171 English) and the title screen's (0x821B56E4:
+// 177, 178) package has been chosen (r4). This executable has only those two each; a European language gets its own,
+// as the European edition's executable picks them: boot logo 172-176, title screen 179-183.
+void BootLogoPackage(PPCRegister& r4)
+{
+    if (const uint32_t package = EuropeanPackage(172))
+        r4.u64 = package;
+}
+
+void TitleScreenPackage(PPCRegister& r4)
+{
+    if (const uint32_t package = EuropeanPackage(179))
+        r4.u64 = package;
 }
