@@ -366,6 +366,7 @@ add_library(ac6_runtime OBJECT
     GracemeriaRecomp/src/gpu/texture_mods.cpp
     GracemeriaRecomp/src/game/frame_rate_fixes.cpp
     GracemeriaRecomp/src/game/packages.cpp
+    GracemeriaRecomp/src/game/captions.cpp
     GracemeriaRecomp/src/game/inflate.cpp
     GracemeriaRecomp/src/game/cutscene_unlock.cpp
     GracemeriaRecomp/src/game/crash_guards.cpp

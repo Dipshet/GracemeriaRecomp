@@ -1,6 +1,8 @@
 // Languages. The console language itself is AC6_LANGUAGE (kernel/imports_system.cpp). This is the game side of the
 // text-only European languages.
 #include "endian.h"
+#include "game/language.h"
+#include "fs/vfs.h"
 #include "game/localization.h"
 #include "settings.h"
 #include "log.h"
@@ -144,15 +146,21 @@ void TitleScreenPackage(PPCRegister& r4)
 // English: the clips its lines play, numbered differently in the two packs), and the mission manager's set-up (its
 // option switch, 0x82098510 and its twins in the other two managers) takes 12 for the English voices. With the English
 // script on the Japanese pack the lines played the wrong clips, cut off: VoiceScriptItem takes 11 there.
-namespace {
-
-bool JapaneseVoices()
+// The cutscenes' subtitles are timed to the voices: game/captions.cpp re-times them to the Japanese ones.
+bool ac6::game::ForceJapaneseAudio()
 {
     static const bool forced = [] {
         const std::string v = ac6::settings::Get("AC6_FORCE_JAPANESE_AUDIO");
         return v == "1" || v == "true";
     }();
     return forced;
+}
+
+namespace {
+
+bool JapaneseVoices()
+{
+    return ac6::game::ForceJapaneseAudio();
 }
 
 } // namespace
@@ -188,6 +196,27 @@ PPC_FUNC(sub_82124968)
     if (JapaneseVoices())
         ctx.r4.u64 = 0;
     __imp__sub_82124968(ctx, base);
+}
+
+// The movies (moviepack.bin: ASF-like files back to back, the North American disc's four at 0, 164657152, 329302016
+// and 512849920): the title movie's Japanese and English versions, then the opening story's (the movie in scene 2,
+// "Realization", after its in-engine part). The game opens one by its language. The story movie's two are the same
+// picture with its staff credits, no text drawn in (the subtitles are the game's, packages 466-472), the sound
+// Japanese or English: with Force Japanese Audio the English one is read from the Japanese one's place. (The title
+// movies differ: the Japanese one has its subtitles drawn in and is partly another edit, so it is left alone.)
+uint64_t ac6::game::MovieReadOffset(const std::string& devicePath, uint64_t fileSize, uint64_t offset)
+{
+    constexpr uint64_t kPackSize = 698417152, kJapanese = 329302016, kEnglish = 512849920;
+    if (offset < kEnglish || fileSize != kPackSize || !ForceJapaneseAudio() || devicePath.size() != 13 ||
+        ac6::fs::ToLower(devicePath) != "moviepack.bin")
+        return offset;
+    static bool logged = false;
+    if (!logged)
+    {
+        logged = true;
+        ac6::log::Info("Force Japanese Audio: the story movie's Japanese version");
+    }
+    return offset - kEnglish + kJapanese;
 }
 
 // The game's voice-language query (0x820F7DA0: *r4 = 0 for Japanese voices, only in the Japanese edition with a

@@ -1,5 +1,7 @@
 // The game's data packages: see game/packages.h.
 #include "game/packages.h"
+#include "game/captions.h"
+#include "game/language.h"
 #include "game/localization.h"
 #include "plugin/ac6_plugin.h"
 #include "plugin/plugins.h"
@@ -602,6 +604,21 @@ void LoadPackageMods()
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
 }
 
+bool UnpackPackage(uint32_t index, std::vector<uint8_t>& out)
+{
+    std::vector<Package> packages;
+    if (!ReadTable(packages) || index >= packages.size())
+        return false;
+    Decoder decoder;
+    std::string why;
+    if (!decoder.Unpack(index, packages[index], out, why))
+    {
+        log::Warn("Packages: {} not unpacked: {}", index, why);
+        return false;
+    }
+    return true;
+}
+
 void PatchPackageTable(uint8_t* data, uint64_t offset, uint64_t length)
 {
     for (const auto& [index, size] : s_tableSizes)
@@ -643,12 +660,23 @@ void LogPackage(int32_t index, uint64_t packedSize, uint64_t size)
     file.flush();
 }
 
+std::mutex s_unpackingMutex;
+std::unordered_map<uint32_t, uint32_t> s_unpacking;   // decoder state -> the disc package it is unpacking (for OnUnpacked)
+
 void OnBegin(uint32_t state, int32_t index, uint32_t result, uint64_t packedSize, uint64_t size)
 {
     if (result)
     {
         LogPackage(index, packedSize, size);
         plugin::Event(plugin::kPackageUnpacked, index);   // (for plugins, such as one adding aircraft)
+    }
+    if (ForceJapaneseAudio())
+    {
+        std::lock_guard lock(s_unpackingMutex);
+        if (result && index >= 0)
+            s_unpacking[state] = uint32_t(index);
+        else
+            s_unpacking.erase(state);
     }
     if (s_built.empty())
         return;
@@ -716,6 +744,31 @@ bool OnRun(PPCContext& ctx)
     return true;
 }
 
+// After a run step: a package whose output is all made (+40 = +48) handed to game/captions.cpp before the game reads it.
+void AfterRun(uint32_t state)
+{
+    if (!ForceJapaneseAudio())
+        return;
+    uint32_t index;
+    {
+        std::lock_guard lock(s_unpackingMutex);
+        const auto it = s_unpacking.find(state);
+        if (it == s_unpacking.end())
+            return;
+        index = it->second;
+    }
+    auto field = [&](uint32_t o) { return g_memory.As<be<uint64_t>>(state + o)->get(); };
+    const uint64_t size = field(48);
+    if (!size || field(40) < size)
+        return;
+    {
+        std::lock_guard lock(s_unpackingMutex);
+        s_unpacking.erase(state);
+    }
+    const uint32_t out = g_memory.As<be<uint32_t>>(state + 60)->get();
+    captions::OnUnpacked(index, static_cast<uint8_t*>(g_memory.Translate(out)), size_t(size));
+}
+
 } // namespace packages_hooks
 
 } // namespace ac6::game
@@ -734,6 +787,8 @@ PPC_FUNC(sub_822CF248)
 extern "C" PPC_FUNC(__imp__sub_822CF510);
 PPC_FUNC(sub_822CF510)
 {
+    const uint32_t state = ctx.r3.u32;
     if (!ac6::game::packages_hooks::OnRun(ctx))
         __imp__sub_822CF510(ctx, base);
+    ac6::game::packages_hooks::AfterRun(state);
 }

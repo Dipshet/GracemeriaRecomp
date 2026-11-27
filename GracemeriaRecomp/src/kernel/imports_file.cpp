@@ -11,6 +11,7 @@
 // I/O completes synchronously: the status block is filled, the caller's event (if any) is signalled and
 // the call returns the final status, which is valid NT behaviour for any request.
 #include "fs/save_store.h"
+#include "game/language.h"
 #include "game/packages.h"
 #include "fs/vfs.h"
 #include "kernel/dispatcher.h"
@@ -561,7 +562,9 @@ uint32_t NtReadFile(uint32_t handle, uint32_t event, uint32_t apcRoutine, uint32
             status = X_STATUS_END_OF_FILE;
         else if (length)
         {
-            n = file->where.device->Read(file->entry(), offset, buffer, length);
+            // (Force Japanese Audio reads one movie of moviepack.bin from another's place: game/language.cpp.)
+            const uint64_t from = game::MovieReadOffset(file->where.devicePath, file->entry().size, offset);
+            n = file->where.device->Read(file->entry(), from, buffer, length);
             // Inside the file's size a read comes back whole, unless the game image is damaged or cut short: an error,
             // which the game takes to its disc-error screen (XamShowDirtyDiscErrorUI), instead of a success with part
             // of the data.

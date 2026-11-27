@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <vector>
 
 namespace ac6::game {
 
@@ -22,6 +23,8 @@ int ExtractPackages(const std::filesystem::path& folder, int first, int count, b
 // as folders). Built before the game starts (not with AC6_PACKAGE_MODS=0, the setting modding.package_mods) and handed
 // to the game when it unpacks them.
 void LoadPackageMods();
+// Package `index` from the disc, unpacked natively into `out` (any thread).
+bool UnpackPackage(uint32_t index, std::vector<uint8_t>& out);
 // DATA.TBL as the game reads it (NtReadFile): the sizes of modded packages that grew raised, so the game makes room.
 void PatchPackageTable(uint8_t* data, uint64_t offset, uint64_t length);
 
